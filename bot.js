@@ -133,6 +133,26 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .cfgkey{color:var(--text3)}
 .sigbox{margin-top:10px;padding:10px;background:var(--bg3);border-radius:6px;text-align:center;border:1px solid var(--border)}
 canvas{display:block;width:100%!important}
+/* Control panel */
+.ctrl-panel{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.ctrl-head{padding:10px 14px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;display:flex;justify-content:space-between;align-items:center}
+.ctrl-body{padding:14px;display:flex;flex-direction:column;gap:12px}
+.ctrl-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ctrl-label{font-size:11px;color:var(--text2);min-width:80px;flex-shrink:0}
+.ctrl-input{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:12px;flex:1;min-width:80px;max-width:120px}
+.ctrl-input:focus{outline:none;border-color:var(--blue)}
+.ctrl-select{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:12px;flex:1}
+.ctrl-select:focus{outline:none;border-color:var(--blue)}
+.ctrl-divider{border:none;border-top:1px solid var(--border);margin:2px 0}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap}
+.cbtn{padding:8px 16px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;border:none;transition:opacity .15s;letter-spacing:.5px}
+.cbtn:hover{opacity:.85}
+.cbtn:active{opacity:.7;transform:scale(.98)}
+.cbtn-restart{background:#1a3a6a;color:#60a5fa;border:1px solid #3a6aaa}
+.cbtn-stop{background:#3a0d0d;color:#ef4444;border:1px solid #7a2020}
+.cbtn-apply{background:#0d2d1a;color:#22c55e;border:1px solid #1a6a3a}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:12px;font-weight:600;z-index:100;opacity:0;transform:translateY(10px);transition:all .3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
 </style>
 </head>
 <body>
@@ -214,8 +234,70 @@ canvas{display:block;width:100%!important}
         <div class="logarea" id="logArea"><div class="nodata">Connecting to Deriv...</div></div>
       </div>
     </div>
+    </div>
+
+  <!-- CONTROL PANEL -->
+  <div class="ctrl-panel">
+    <div class="ctrl-head">
+      <span>⚙ Bot Control Panel</span>
+      <span id="ctrlStatus" style="color:var(--amber)">Ready</span>
+    </div>
+    <div class="ctrl-body">
+
+      <!-- Instrument selector -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">Instrument</span>
+        <select class="ctrl-select" id="ctrlInstr">
+          <option value="BOOM500">Boom 500</option>
+          <option value="BOOM1000">Boom 1000</option>
+          <option value="CRASH500">Crash 500</option>
+          <option value="CRASH1000">Crash 1000</option>
+        </select>
+      </div>
+
+      <!-- Stake -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">Stake ($)</span>
+        <input class="ctrl-input" type="number" id="ctrlStake" min="0.35" max="100" step="0.05" placeholder="0.35">
+        <span style="font-size:11px;color:var(--text3)">min $0.35</span>
+      </div>
+
+      <!-- Max Drawdown -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">Max DD (%)</span>
+        <input class="ctrl-input" type="number" id="ctrlDD" min="1" max="50" step="1" placeholder="10">
+        <span style="font-size:11px;color:var(--text3)">stop-loss</span>
+      </div>
+
+      <!-- Profit Target -->
+      <div class="ctrl-row">
+        <span class="ctrl-label">Target (%)</span>
+        <input class="ctrl-input" type="number" id="ctrlTgt" min="1" max="100" step="1" placeholder="15">
+        <span style="font-size:11px;color:var(--text3)">take-profit</span>
+      </div>
+
+      <hr class="ctrl-divider">
+
+      <!-- Action buttons -->
+      <div class="btn-row">
+        <button class="cbtn cbtn-apply" onclick="applySettings()">✅ Apply Settings</button>
+        <button class="cbtn cbtn-restart" onclick="restartBot()">🔄 Restart Bot</button>
+        <button class="cbtn cbtn-stop" onclick="stopBot()">⏹ Stop Bot</button>
+      </div>
+
+      <div style="font-size:10px;color:var(--text3);line-height:1.6">
+        Apply Settings updates instrument/stake/DD/target instantly without restarting.
+        Restart reconnects to Deriv and begins scanning again.
+        Stop pauses trading until next midnight reset or manual restart.
+      </div>
+
+    </div>
   </div>
+
 </div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
 
 <script>
 let pChart=null, eChart=null;
@@ -345,9 +427,102 @@ function update(d){
   }
 }
 
+// ── TOAST NOTIFICATION ───────────────────────────────────────
+function showToast(msg, color){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.color=color||'#22c55e';
+  t.style.borderColor=color||'#22c55e';
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+// ── CONTROL PANEL ────────────────────────────────────────────
+function setCtrlStatus(msg, color){
+  const el=document.getElementById('ctrlStatus');
+  el.textContent=msg;
+  el.style.color=color||'#f59e0b';
+}
+
+async function sendControl(payload){
+  try{
+    const r=await fetch('/api/control',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload),
+    });
+    const data=await r.json();
+    return data;
+  }catch(e){
+    return{ok:false,msg:'Connection error: '+e.message};
+  }
+}
+
+async function applySettings(){
+  setCtrlStatus('Applying...','#f59e0b');
+  const instr = document.getElementById('ctrlInstr').value;
+  const stake = document.getElementById('ctrlStake').value;
+  const dd    = document.getElementById('ctrlDD').value;
+  const tgt   = document.getElementById('ctrlTgt').value;
+
+  const payload={action:'update'};
+  if(instr) payload.instrument=instr;
+  if(stake) payload.stake=parseFloat(stake);
+  if(dd)    payload.maxDD=parseFloat(dd);
+  if(tgt)   payload.target=parseFloat(tgt);
+
+  const res=await sendControl(payload);
+  if(res.ok){
+    setCtrlStatus('Applied ✓','#22c55e');
+    showToast('✅ '+res.msg,'#22c55e');
+  } else {
+    setCtrlStatus('Error','#ef4444');
+    showToast('❌ '+res.msg,'#ef4444');
+  }
+  setTimeout(()=>setCtrlStatus('Ready','#f59e0b'),3000);
+}
+
+async function restartBot(){
+  if(!confirm('Restart the bot? It will reconnect to Deriv and resume scanning.')) return;
+  setCtrlStatus('Restarting...','#60a5fa');
+  const res=await sendControl({action:'restart'});
+  if(res.ok){
+    showToast('🔄 '+res.msg,'#60a5fa');
+    setCtrlStatus('Restarting...','#60a5fa');
+  } else {
+    setCtrlStatus('Error','#ef4444');
+    showToast('❌ '+res.msg,'#ef4444');
+  }
+}
+
+async function stopBot(){
+  if(!confirm('Stop the bot? Trading will pause until you restart.')) return;
+  setCtrlStatus('Stopping...','#ef4444');
+  const res=await sendControl({action:'stop'});
+  if(res.ok){
+    showToast('⏹ '+res.msg,'#ef4444');
+    setCtrlStatus('Stopped','#ef4444');
+  } else {
+    showToast('❌ '+res.msg,'#ef4444');
+  }
+}
+
+// Sync control panel inputs with live config values
+function syncControls(d){
+  const instr=document.getElementById('ctrlInstr');
+  const stake=document.getElementById('ctrlStake');
+  const dd=document.getElementById('ctrlDD');
+  const tgt=document.getElementById('ctrlTgt');
+  // Only update if user isn't currently editing
+  if(document.activeElement!==instr) instr.value=d.instrument||'BOOM500';
+  if(document.activeElement!==stake) stake.placeholder='$'+(d.baseStake||0.35);
+  if(document.activeElement!==dd)    dd.placeholder=(d.maxDD||10)+'%';
+  if(document.activeElement!==tgt)   tgt.placeholder='+'+(d.dailyTarget||15)+'%';
+}
+
 function poll(){
   fetch('/api/state')
-    .then(r=>r.json()).then(update)
+    .then(r=>r.json()).then(d=>{update(d);syncControls(d);})
     .catch(()=>{ document.getElementById('sPill').textContent='OFFLINE'; });
 }
 
@@ -401,6 +576,74 @@ const server = http.createServer((req, res) => {
       martiMult    : CONFIG.MARTI_MULT,
       dailyResets  : S.dailyResets,
     }));
+
+  } else if (req.url === '/api/control' && req.method === 'POST') {
+    // Control panel API — handles restart, stop, settings changes
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const cmd = JSON.parse(body);
+        res.writeHead(200, {'Content-Type':'application/json','Access-Control-Allow-Origin':'*'});
+
+        if (cmd.action === 'stop') {
+          S.stopped = true;
+          if (S.ws) S.ws.close();
+          log.stop('Bot stopped from dashboard');
+          res.end(JSON.stringify({ ok:true, msg:'Bot stopped' }));
+
+        } else if (cmd.action === 'restart') {
+          log.info('Restart requested from dashboard...');
+          S.stopped = false;
+          S.ticks = []; S.inTrade = false;
+          S.currentSignal = null; S.reconnects = 0;
+          if (S.ws) { try { S.ws.close(); } catch(e){} }
+          setTimeout(startBot, 1000);
+          res.end(JSON.stringify({ ok:true, msg:'Bot restarting...' }));
+
+        } else if (cmd.action === 'update') {
+          // Live update settings without restarting
+          const changes = [];
+          if (cmd.instrument && ['BOOM500','BOOM1000','CRASH500','CRASH1000'].includes(cmd.instrument)) {
+            CONFIG.INSTRUMENT = cmd.instrument;
+            S.ticks = []; S.priceHistory = []; // reset tick buffer for new instrument
+            changes.push('Instrument → '+cmd.instrument);
+            // Resubscribe to new instrument ticks
+            if (S.ws && S.ws.readyState === WebSocket.OPEN) {
+              send({ ticks: SYMBOL_MAP[cmd.instrument], subscribe: 1 });
+            }
+          }
+          if (cmd.stake && !isNaN(cmd.stake) && cmd.stake >= 0.35) {
+            CONFIG.BASE_STAKE = parseFloat(parseFloat(cmd.stake).toFixed(2));
+            changes.push('Stake → $'+CONFIG.BASE_STAKE);
+          }
+          if (cmd.maxDD && !isNaN(cmd.maxDD) && cmd.maxDD > 0 && cmd.maxDD <= 50) {
+            CONFIG.MAX_DAILY_DD = parseFloat(cmd.maxDD);
+            changes.push('Max DD → '+CONFIG.MAX_DAILY_DD+'%');
+          }
+          if (cmd.target && !isNaN(cmd.target) && cmd.target > 0 && cmd.target <= 100) {
+            CONFIG.DAILY_TARGET = parseFloat(cmd.target);
+            changes.push('Target → +'+CONFIG.DAILY_TARGET+'%');
+          }
+          if (changes.length > 0) {
+            log.info('Settings updated from dashboard: '+changes.join(' | '));
+            res.end(JSON.stringify({ ok:true, msg:'Updated: '+changes.join(', ') }));
+          } else {
+            res.end(JSON.stringify({ ok:false, msg:'No valid changes provided' }));
+          }
+
+        } else {
+          res.end(JSON.stringify({ ok:false, msg:'Unknown action' }));
+        }
+      } catch(e) {
+        res.writeHead(400, {'Content-Type':'application/json'});
+        res.end(JSON.stringify({ ok:false, msg:'Invalid request: '+e.message }));
+      }
+    });
+
+  } else if (req.url === '/api/control' && req.method === 'OPTIONS') {
+    res.writeHead(200, {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type'});
+    res.end();
 
   } else if (req.url === '/manifest.json') {
     res.writeHead(200, {'Content-Type':'application/manifest+json'});
