@@ -15,7 +15,7 @@ const chalk     = require('chalk');
 //  CONFIG — all values come from Railway → Variables tab
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  DERIV_API_TOKEN : process.env.DERIV_API_TOKEN || 'pat_12bdd4f66ea4a9f215e87d7288c15602fa435dae86298760537da5c78b4b2a49',
+  DERIV_API_TOKEN : process.env.DERIV_API_TOKEN || 'pat_452de8c6d275dd6a8adc196a4d48f90948013c85ea702ad4cde070c36dbcc103',
   DERIV_APP_ID    : process.env.DERIV_APP_ID    || '34p4exLBj1NDTx15WfqnE',
   DEMO_MODE       : process.env.DEMO_MODE !== 'false',
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
