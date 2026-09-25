@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#081529">
+  <title>Sign in · DERIV EA BOT</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/login.js" defer></script>
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="brand"><span class="logo-mark">◈</span><span><strong>DERIV <em>EA BOT</em></strong><small>AUTOMATED TRADING SYSTEM</small></span></div>
+    <span class="eyebrow">PRIVATE DASHBOARD</span>
+    <h1>Welcome back</h1>
+    <p>Sign in to view your bot's reported state. Trading controls are disabled in this integration.</p>
+    <form id="login-form">
+      <label for="password">Dashboard password</label>
+      <input id="password" type="password" autocomplete="current-password" minlength="16" required placeholder="Enter your dashboard password">
+      <button class="primary-button" type="submit">SIGN IN</button>
+    </form>
+    <p id="login-error" class="form-error" role="alert" hidden></p>
+    <div class="login-foot">Your password is checked by your own Railway server. Never enter a Deriv API token here.</div>
+  </main>
+</body>
+</html>

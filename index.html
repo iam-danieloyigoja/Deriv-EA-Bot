@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#081529">
+  <meta name="description" content="DERIV EA BOT — private, read-only trading dashboard">
+  <title>DERIV EA BOT — Dashboard</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="logo-mark" aria-hidden="true">◈</span><span><strong>DERIV <em>EA BOT</em></strong><small>AUTOMATED TRADING SYSTEM</small></span></div>
+      <div class="header-right"><span class="readonly-tag">READ-ONLY</span><span class="status-pill" id="connection"><i class="status-dot"></i> CONNECTING</span><button type="button" class="small-button" id="logout">SIGN OUT</button></div>
+    </header>
+    <div class="banner" role="status"><span class="banner-icon">ⓘ</span><span><strong>Monitoring mode:</strong> This dashboard reads reported bot data. It cannot start trading, switch accounts, change settings, or execute trades. <span id="feed-note">Waiting for bot status…</span></span></div>
+    <main class="dashboard-grid">
+      <section class="overview" aria-labelledby="overview-title">
+        <div class="section-header"><h2 id="overview-title">ACCOUNT OVERVIEW</h2><span id="account-mode" class="muted-label">NOT VERIFIED</span></div>
+        <div class="metrics">
+          <div class="metric primary"><span>BALANCE</span><strong id="balance">—</strong></div>
+          <div class="metric"><span>SESSION P&amp;L</span><strong id="pnl">—</strong></div>
+          <div class="metric"><span>DRAWDOWN</span><strong id="drawdown">—</strong></div>
+          <div class="metric"><span>TRADES</span><strong id="trades">—</strong></div>
+          <div class="metric"><span>WIN RATE</span><strong id="win-rate">—</strong></div>
+          <div class="metric"><span>STREAK</span><strong id="streak">—</strong></div>
+        </div>
+      </section>
+      <section class="panel configuration" aria-labelledby="settings-title">
+        <div class="section-header"><h2 id="settings-title">BOT CONFIGURATION</h2><span class="muted-label">VIEW ONLY</span></div>
+        <div class="settings-grid">
+          <label class="setting"><span>INSTRUMENT</span><output id="instrument-setting">—</output></label>
+          <label class="setting"><span>STAKE ($)</span><output id="stake-setting">—</output></label>
+          <label class="setting"><span>DD LIMIT</span><output id="dd-setting">—</output></label>
+          <label class="setting"><span>TARGET PROFIT</span><output id="target-setting">—</output></label>
+        </div>
+        <div class="control-actions"><button disabled type="button" class="secondary-button" title="Read-only: settings changes are not enabled">RESET</button><button disabled type="button" class="primary-button" title="Read-only: trading controls are not enabled">START / STOP LOCKED</button></div>
+        <p class="hint">Controls are intentionally disabled. Existing bot.js settings are displayed without modifying them.</p>
+      </section>
+      <section class="panel chart-panel" aria-labelledby="chart-title">
+        <div class="chart-header"><h2 id="chart-title"><span id="instrument-chart">—</span> <span class="chart-descriptor">TICK PRICE HISTORY</span></h2><span class="chart-price" id="price">—</span></div>
+        <div class="chart-wrap"><svg id="price-chart" viewBox="0 0 780 270" preserveAspectRatio="none" role="img" aria-label="Reported recent tick prices from bot.js"><g id="chart-grid"></g><path id="chart-area"></path><path id="chart-line"></path></svg><div class="axis-values"><span id="chart-high">—</span><span id="chart-mid">—</span><span id="chart-low">—</span></div><div class="chart-empty" id="chart-empty">Waiting for reported market ticks…</div></div>
+        <div class="chart-footer"><div class="timeframes" role="group" aria-label="Number of recent ticks"><button type="button" data-ticks="20">20 TICKS</button><button type="button" data-ticks="40">40 TICKS</button><button type="button" data-ticks="80" aria-pressed="true" class="active">80 TICKS</button></div><span>Historical ticks · Not candlesticks</span></div>
+      </section>
+      <section class="panel signals-panel" aria-labelledby="signals-title">
+        <div class="section-header"><h2 id="signals-title">SIGNAL CONFLUENCE</h2><span class="muted-label">REPORTED DATA</span></div>
+        <div class="signal-list">
+          <div class="signal-row"><span>RSI (14)</span><div class="bar"><i id="rsi-bar"></i></div><strong id="rsi">—</strong></div>
+          <div class="signal-row"><span>Stoch RSI</span><div class="bar"><i id="stoch-bar"></i></div><strong id="stoch">—</strong></div>
+          <div class="signal-row"><span>EMA 8/21</span><div class="bar"><i id="ema-bar"></i></div><strong id="ema">—</strong></div>
+          <div class="signal-row"><span>MACD</span><div class="bar"><i id="macd-bar"></i></div><strong id="macd">—</strong></div>
+          <div class="signal-row"><span>BB squeeze</span><div class="bar"><i id="squeeze-bar"></i></div><strong id="squeeze">—</strong></div>
+          <div class="signal-row"><span>Spike</span><div class="bar"><i id="spike-bar"></i></div><strong id="spike">—</strong></div>
+        </div>
+        <div class="active-signal"><span>ACTIVE SIGNAL</span><strong id="active-signal">No signal reported</strong></div>
+      </section>
+      <section class="panel trades-panel" aria-labelledby="recent-title">
+        <div class="section-header"><h2 id="recent-title">RECENT TRADES</h2><span class="muted-label" id="trade-source">BOT REPORTED</span></div>
+        <div class="trade-heading"><span>STRATEGY</span><span>SIDE</span><span>STAKE</span><span>RESULT</span></div>
+        <div id="trade-list" class="trade-list"><div class="empty-trades">No trades reported yet.</div></div>
+      </section>
+    </main>
+    <footer class="app-footer"><span>◇</span> Read-only monitoring dashboard. Numbers are reported by the bot, not independently reconciled with Deriv. <span id="updated">No update received</span></footer>
+  </div>
+</body>
+</html>
