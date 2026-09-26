@@ -83,14 +83,15 @@ function safeHistory(list, max) {
 function snapshot(state, config) {
   const simulation = config.DEMO_MODE === true;
   const fixtureOnly = process.env.STAGING_FIXTURE_ONLY === 'true';
+  const demoReadOnly = process.env.READ_ONLY_DEMO === 'true';
   const connected = Boolean(state.ws && state.ws.readyState === 1);
   const value = {
     observedAt: new Date().toISOString(),
     testOnly: process.env.DASHBOARD_TEST_ONLY === 'true',
     fixtureOnly,
-    accountType: fixtureOnly ? 'OFFLINE PREVIEW - NO ACCOUNT' : simulation ? 'SIMULATION' : 'REAL - READ ONLY',
-    balanceSource: fixtureOnly ? 'NO ACCOUNT OR BALANCE DATA' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'DERIV DEMO BALANCE (BOT REPORTED)' : simulation ? 'BOT-SIMULATED BALANCE' : 'BOT REPORTED BALANCE',
-    tradeSource: fixtureOnly ? 'OFFLINE - NO TRADES' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'TRADING DISABLED' : simulation ? 'SIMULATED RESULTS' : 'BOT REPORTED RESULTS',
+    accountType: fixtureOnly ? 'OFFLINE PREVIEW - NO ACCOUNT' : demoReadOnly ? 'DERIV DEMO - READ ONLY' : simulation ? 'SIMULATION' : 'REAL - READ ONLY',
+    balanceSource: fixtureOnly ? 'NO ACCOUNT OR BALANCE DATA' : demoReadOnly ? 'DERIV DEMO BALANCE' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'DERIV DEMO BALANCE (BOT REPORTED)' : simulation ? 'BOT-SIMULATED BALANCE' : 'BOT REPORTED BALANCE',
+    tradeSource: fixtureOnly ? 'OFFLINE - NO TRADES' : demoReadOnly ? 'TRADING DISABLED - READ ONLY' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'TRADING DISABLED' : simulation ? 'SIMULATED RESULTS' : 'BOT REPORTED RESULTS',
     connected,
     running: Boolean(connected && !state.stopped && process.env.DASHBOARD_TEST_ONLY !== 'true'),
     stopped: Boolean(state.stopped || process.env.DASHBOARD_TEST_ONLY === 'true'),
