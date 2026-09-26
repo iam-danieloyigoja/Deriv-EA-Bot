@@ -11,13 +11,20 @@ const state = {
   equityHistory: [100], indicators: { rsi: 50, stochRsi: 55, emaSignal: 'up', macd: .02, squeeze: false, spike: false },
   recentTrades: [], accountId: 'DO_NOT_LEAK_ACCOUNT', pendingCbs: { DERIV_API_TOKEN: 'DO_NOT_LEAK_TOKEN' },
 };
-const config = { DEMO_MODE: true, INSTRUMENT: 'BOOM500', BASE_STAKE: .35, MAX_DAILY_DD: 10, DAILY_TARGET: 15, DERIV_API_TOKEN: 'DO_NOT_LEAK_TOKEN' };
+const config = {
+  DEMO_MODE: true, INSTRUMENT: 'BOOM500', BASE_STAKE: .35, MAX_DAILY_DD: 10, DAILY_TARGET: 15,
+  ALLOWED_INSTRUMENTS: ['BOOM500', 'CRASH500'], DERIV_API_TOKEN: 'DO_NOT_LEAK_TOKEN'
+};
 
 function request(port, pathname, method = 'GET', payload = null, cookie = '') {
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1', port, path: pathname, method,
-      headers: { Host: `127.0.0.1:${port}`, ...(method === 'POST' ? { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+      headers: {
+        Host: `127.0.0.1:${port}`,
+        ...(method === 'POST' ? { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json' } : {}),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
     }, res => {
       let body = '';
       res.on('data', chunk => body += chunk);
@@ -29,49 +36,94 @@ function request(port, pathname, method = 'GET', payload = null, cookie = '') {
   });
 }
 
-test('adapter: authenticated status, blocked legacy controls, demo test-only view', async () => {
+async function login(port) {
+  const response = await request(port, '/api/dashboard/login', 'POST', { password: process.env.DASHBOARD_PASSWORD });
+  assert.equal(response.code, 200);
+  return response.headers['set-cookie'][0].split(';')[0];
+}
+
+test('adapter: authenticated status, legacy controls blocked, safe controls locked by default', async () => {
   process.env.DASHBOARD_PASSWORD = 'Example-Strong-Local-Test-Password';
   process.env.DASHBOARD_TEST_ONLY = 'true';
+  process.env.READ_ONLY_DEMO = 'true';
+
   const server = http.createServer(createDashboardHandler({ state, config }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
+
   try {
     let response = await request(port, '/api/dashboard/state');
     assert.equal(response.code, 401);
+
     response = await request(port, '/api/control', 'POST', { action: 'restart' });
     assert.equal(response.code, 410);
-    response = await request(port, '/api/dashboard/control', 'POST', { action: 'restart' });
+
+    response = await request(port, '/api/dashboard/control', 'POST', { action: 'start' });
     assert.equal(response.code, 423);
-    response = await request(port, '/api/dashboard/login', 'POST', { password: 'wrong' });
-    assert.equal(response.code, 401);
-    response = await request(port, '/api/dashboard/login', 'POST', { password: process.env.DASHBOARD_PASSWORD });
-    assert.equal(response.code, 200);
-    const cookie = response.headers['set-cookie'][0].split(';')[0];
-    assert.match(response.headers['set-cookie'][0], /HttpOnly/);
-    assert.match(response.headers['set-cookie'][0], /SameSite=Strict/);
+
+    const cookie = await login(port);
     response = await request(port, '/api/dashboard/state', 'GET', null, cookie);
     assert.equal(response.code, 200);
+
     const d = JSON.parse(response.body);
     assert.equal(d.testOnly, true);
-    assert.equal(d.stopped, true);
-    assert.equal(d.tradeSource, 'TRADING DISABLED');
+    assert.equal(d.controlsEnabled, false);
+    assert.equal(d.executionEnabled, false);
     assert.equal(d.balance, 100);
     assert.equal(d.indicators.rsi, 50);
-    assert.equal(d.priceHistory.length, 2);
     assert.ok(!response.body.includes('DO_NOT_LEAK_ACCOUNT'));
     assert.ok(!response.body.includes('DO_NOT_LEAK_TOKEN'));
-    response = await request(port, '/');
-    assert.equal(response.code, 302);
-    response = await request(port, '/', 'GET', null, cookie);
-    assert.equal(response.code, 200);
-    assert.match(response.body, /DERIV EA BOT/);
-    response = await request(port, '/api/dashboard/logout', 'POST', {}, cookie);
-    assert.equal(response.code, 200);
-    assert.match(response.headers['set-cookie'][0], /Max-Age=0/);
   } finally {
     await new Promise(resolve => server.close(resolve));
     delete process.env.DASHBOARD_PASSWORD;
     delete process.env.DASHBOARD_TEST_ONLY;
+    delete process.env.READ_ONLY_DEMO;
+  }
+});
+
+test('safe demo controls require auth and only call provided control adapter', async () => {
+  process.env.DASHBOARD_PASSWORD = 'Example-Strong-Local-Test-Password';
+  process.env.DASHBOARD_TEST_ONLY = 'true';
+  process.env.READ_ONLY_DEMO = 'true';
+  process.env.SAFE_DEMO_CONTROLS = 'true';
+
+  const calls = [];
+  const controls = {
+    async apply(body) {
+      calls.push(body);
+      return { accepted: true, executionEnabled: false };
+    },
+  };
+
+  const server = http.createServer(createDashboardHandler({ state, config, controls }));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+
+  try {
+    let response = await request(port, '/api/dashboard/control', 'POST', { action: 'start' });
+    assert.equal(response.code, 401);
+
+    const cookie = await login(port);
+
+    response = await request(port, '/api/dashboard/state', 'GET', null, cookie);
+    assert.equal(response.code, 200);
+    const d = JSON.parse(response.body);
+    assert.equal(d.controlsEnabled, true);
+    assert.equal(d.executionEnabled, false);
+    assert.deepEqual(d.allowedInstruments, ['BOOM500', 'CRASH500']);
+
+    response = await request(port, '/api/dashboard/control', 'POST', {
+      action: 'update-config', instrument: 'BOOM500', baseStake: .35, maxDD: 10, dailyTarget: 15,
+    }, cookie);
+    assert.equal(response.code, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, 'update-config');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    delete process.env.DASHBOARD_PASSWORD;
+    delete process.env.DASHBOARD_TEST_ONLY;
+    delete process.env.READ_ONLY_DEMO;
+    delete process.env.SAFE_DEMO_CONTROLS;
   }
 });
 

@@ -1,7 +1,5 @@
 'use strict';
 
-// Read-only, authenticated same-origin bridge for the existing bot.js state.
-// Never imports the Deriv API token and never sends trading commands.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -10,7 +8,7 @@ const COOKIE = 'deriv_dashboard_session';
 const SESSION_SECONDS = 6 * 60 * 60;
 const COOKIE_SECRET = crypto.randomBytes(32);
 const PASSWORD_SALT = crypto.randomBytes(16);
-const MAX_BODY_BYTES = 2048;
+const MAX_BODY_BYTES = 4096;
 const FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/dashboard.css': ['dashboard.css', 'text/css; charset=utf-8'],
@@ -54,7 +52,6 @@ function isAuthenticated(req) {
 
 function secureCookie(req) {
   const isLocal = /^localhost(?::\d+)?$|^127\.0\.0\.1(?::\d+)?$/.test(req.headers.host || '');
-  // Railway terminates TLS at its proxy; production cookies are always Secure.
   return isLocal ? '' : '; Secure';
 }
 
@@ -71,6 +68,23 @@ function sameOrigin(req) {
   }
 }
 
+function readJsonBody(req, res, callback) {
+  let body = '';
+  let tooLarge = false;
+  req.on('data', chunk => {
+    if (tooLarge) return;
+    body += chunk;
+    if (body.length > MAX_BODY_BYTES) tooLarge = true;
+  });
+  req.on('end', () => {
+    if (tooLarge) return sendJson(res, 413, { error: 'Request too large' });
+    let parsed;
+    try { parsed = JSON.parse(body || '{}'); }
+    catch { return sendJson(res, 400, { error: 'Invalid JSON request' }); }
+    callback(parsed);
+  });
+}
+
 function safeNumber(n) {
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
 }
@@ -84,18 +98,31 @@ function snapshot(state, config) {
   const simulation = config.DEMO_MODE === true;
   const fixtureOnly = process.env.STAGING_FIXTURE_ONLY === 'true';
   const demoReadOnly = process.env.READ_ONLY_DEMO === 'true';
+  const controlsEnabled =
+    process.env.SAFE_DEMO_CONTROLS === 'true' &&
+    process.env.DASHBOARD_TEST_ONLY === 'true' &&
+    demoReadOnly &&
+    simulation;
   const connected = Boolean(state.ws && state.ws.readyState === 1);
-  const value = {
+  const instruments = Array.isArray(config.ALLOWED_INSTRUMENTS)
+    ? config.ALLOWED_INSTRUMENTS.filter(v => typeof v === 'string').slice(0, 16)
+    : [];
+
+  return {
     observedAt: new Date().toISOString(),
     testOnly: process.env.DASHBOARD_TEST_ONLY === 'true',
     fixtureOnly,
-    accountType: fixtureOnly ? 'OFFLINE PREVIEW - NO ACCOUNT' : demoReadOnly ? 'DERIV DEMO - READ ONLY' : simulation ? 'SIMULATION' : 'REAL - READ ONLY',
-    balanceSource: fixtureOnly ? 'NO ACCOUNT OR BALANCE DATA' : demoReadOnly ? 'DERIV DEMO BALANCE' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'DERIV DEMO BALANCE (BOT REPORTED)' : simulation ? 'BOT-SIMULATED BALANCE' : 'BOT REPORTED BALANCE',
-    tradeSource: fixtureOnly ? 'OFFLINE - NO TRADES' : demoReadOnly ? 'TRADING DISABLED - READ ONLY' : process.env.DASHBOARD_TEST_ONLY === 'true' ? 'TRADING DISABLED' : simulation ? 'SIMULATED RESULTS' : 'BOT REPORTED RESULTS',
+    controlsEnabled,
+    executionEnabled: false,
+    accountType: fixtureOnly ? 'OFFLINE PREVIEW - NO ACCOUNT' : demoReadOnly ? 'DERIV DEMO - CONTROLS' : simulation ? 'SIMULATION' : 'REAL - READ ONLY',
+    balanceSource: fixtureOnly ? 'NO ACCOUNT OR BALANCE DATA' : demoReadOnly ? 'DERIV DEMO BALANCE' : simulation ? 'BOT-SIMULATED BALANCE' : 'BOT REPORTED BALANCE',
+    tradeSource: fixtureOnly ? 'OFFLINE - NO TRADES' : demoReadOnly ? 'ORDER EXECUTION DISABLED' : simulation ? 'SIMULATED RESULTS' : 'BOT REPORTED RESULTS',
     connected,
-    running: Boolean(connected && !state.stopped && process.env.DASHBOARD_TEST_ONLY !== 'true'),
-    stopped: Boolean(state.stopped || process.env.DASHBOARD_TEST_ONLY === 'true'),
+    monitoringActive: Boolean(connected && !state.stopped),
+    running: Boolean(connected && !state.stopped),
+    stopped: Boolean(state.stopped),
     instrument: typeof config.INSTRUMENT === 'string' ? config.INSTRUMENT : null,
+    allowedInstruments: instruments,
     balance: safeNumber(state.balance),
     startBalance: safeNumber(state.startBalance),
     dailyPnl: safeNumber(state.dailyPnl),
@@ -132,11 +159,9 @@ function snapshot(state, config) {
       profit: safeNumber(t.profit),
     })),
   };
-  // Never pass any other internal state through (token, account ID, OTP URL, WS, callbacks, logs).
-  return value;
 }
 
-function createDashboardHandler({ state, config }) {
+function createDashboardHandler({ state, config, controls = null }) {
   if (!state || !config) throw new Error('createDashboardHandler requires state and config');
   const password = process.env.DASHBOARD_PASSWORD || '';
   const passwordConfigured = password.length >= 16;
@@ -153,38 +178,58 @@ function createDashboardHandler({ state, config }) {
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Vary', 'Cookie');
+
     let pathname;
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname; }
     catch { return sendText(res, 400, 'Bad request'); }
     const isPost = req.method === 'POST';
     const isGet = req.method === 'GET';
 
-    // Deny legacy unauthenticated endpoints, even if an old client tries them.
     if (pathname === '/api/control' || pathname === '/api/state') {
-      return sendJson(res, 410, { error: 'Legacy API disabled. Use the authenticated dashboard endpoint.' });
+      return sendJson(res, 410, { error: 'Legacy API disabled.' });
     }
+
     if (pathname === '/api/dashboard/control') {
-      return sendJson(res, 423, { error: 'Controls are locked. This integration is read-only.' });
+      if (!isPost) return sendText(res, 405, 'Method not allowed');
+
+      const safeControlMode =
+        process.env.SAFE_DEMO_CONTROLS === 'true' &&
+        process.env.DASHBOARD_TEST_ONLY === 'true' &&
+        process.env.READ_ONLY_DEMO === 'true' &&
+        config.DEMO_MODE === true &&
+        controls &&
+        typeof controls.apply === 'function';
+
+      if (!safeControlMode) return sendJson(res, 423, { error: 'Demo controls are locked.' });
+      if (!sameOrigin(req)) return sendJson(res, 403, { error: 'Origin rejected' });
+      if (!passwordConfigured || !isAuthenticated(req)) return sendJson(res, 401, { error: 'Sign in required' });
+
+      return readJsonBody(req, res, async body => {
+        try {
+          const result = await controls.apply(body);
+          return sendJson(res, 200, { ok: true, result: result || null });
+        } catch (error) {
+          const code = Number.isInteger(error && error.statusCode) ? error.statusCode : 400;
+          return sendJson(res, code, { error: String(error && error.message || 'Control request failed').slice(0, 180) });
+        }
+      });
     }
+
     if (pathname === '/health' && isGet) return sendJson(res, 200, { ok: true });
+
     if (pathname === '/api/dashboard/session' && isGet) {
       return sendJson(res, 200, { authenticated: passwordConfigured && isAuthenticated(req) });
     }
+
     if (pathname === '/api/dashboard/login' && isPost) {
       if (!sameOrigin(req)) return sendJson(res, 403, { error: 'Origin rejected' });
       if (!passwordConfigured) return sendJson(res, 503, { error: 'Dashboard password is not configured' });
       const peer = req.socket.remoteAddress || 'unknown';
       const prior = failures.get(peer) || { count: 0, until: 0 };
       if (prior.until > Date.now()) return sendJson(res, 429, { error: 'Too many attempts. Try again later.' });
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk;
-        if (body.length > MAX_BODY_BYTES) req.destroy();
-      });
-      return req.on('end', () => {
-        let supplied;
-        try { supplied = JSON.parse(body).password; }
-        catch { return sendJson(res, 400, { error: 'Invalid request' }); }
+
+      return readJsonBody(req, res, suppliedBody => {
+        const supplied = suppliedBody.password;
         if (typeof supplied !== 'string' || supplied.length > 1024) return sendJson(res, 400, { error: 'Invalid request' });
         const digest = crypto.scryptSync(supplied, PASSWORD_SALT, 64);
         if (!crypto.timingSafeEqual(digest, targetHash)) {
@@ -197,20 +242,23 @@ function createDashboardHandler({ state, config }) {
         const until = Date.now() + SESSION_SECONDS * 1000;
         const token = `${id}.${until}.${signature(`${id}.${until}`)}`;
         res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_SECONDS}${secureCookie(req)}`);
-        sendJson(res, 200, { authenticated: true });
+        return sendJson(res, 200, { authenticated: true });
       });
     }
+
     if (pathname === '/api/dashboard/logout' && isPost) {
       if (!sameOrigin(req)) return sendJson(res, 403, { error: 'Origin rejected' });
       res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureCookie(req)}`);
       return sendJson(res, 200, { authenticated: false });
     }
+
     if (pathname === '/login' || pathname === '/login.js' || pathname === '/dashboard.css') {
       if (!isGet) return sendText(res, 405, 'Method not allowed');
       const [filename, mime] = FILES[pathname];
       res.setHeader('Content-Type', mime);
       return res.end(fs.readFileSync(path.join(ROOT, filename)));
     }
+
     if (!passwordConfigured || !isAuthenticated(req)) {
       if (pathname === '/api/dashboard/state') return sendJson(res, 401, { error: 'Sign in required' });
       if (isGet && (pathname === '/' || pathname === '/dashboard.js')) {
@@ -219,14 +267,17 @@ function createDashboardHandler({ state, config }) {
       }
       return sendText(res, 404, 'Not found');
     }
+
     if (pathname === '/api/dashboard/state' && isGet) {
       return sendJson(res, 200, snapshot(state, config));
     }
+
     if (isGet && FILES[pathname]) {
       const [filename, mime] = FILES[pathname];
       res.setHeader('Content-Type', mime);
       return res.end(fs.readFileSync(path.join(ROOT, filename)));
     }
+
     return sendText(res, 404, 'Not found');
   };
 }
