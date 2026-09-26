@@ -1,11 +1,11 @@
-'use strict';
+﻿'use strict';
 
 const element = id => document.getElementById(id);
 const number = value => typeof value === 'number' && Number.isFinite(value);
 const text = (id, value) => { element(id).textContent = value; };
-const numeric = (value, decimals = 2) => number(value) ? value.toFixed(decimals) : '—';
-const money = value => number(value) ? `$${Math.abs(value).toFixed(2)}` : '—';
-const signedMoney = value => number(value) ? `${value > 0 ? '+' : value < 0 ? '−' : ''}$${Math.abs(value).toFixed(2)}` : '—';
+const numeric = (value, decimals = 2) => number(value) ? value.toFixed(decimals) : 'â€”';
+const money = value => number(value) ? `$${Math.abs(value).toFixed(2)}` : 'â€”';
+const signedMoney = value => number(value) ? `${value > 0 ? '+' : value < 0 ? 'âˆ’' : ''}$${Math.abs(value).toFixed(2)}` : 'â€”';
 let tickCount = 80;
 let latest = null;
 let failureCount = 0;
@@ -33,7 +33,7 @@ function renderChart(prices) {
   if (isEmpty) {
     element('chart-line').setAttribute('d', '');
     element('chart-area').setAttribute('d', '');
-    text('chart-high', '—'); text('chart-mid', '—'); text('chart-low', '—');
+    text('chart-high', 'â€”'); text('chart-mid', 'â€”'); text('chart-low', 'â€”');
     return;
   }
   const lo = Math.min(...points), hi = Math.max(...points);
@@ -63,8 +63,10 @@ function render(data) {
   status.classList.toggle('online', data.connected);
   status.replaceChildren(); // API strings are never interpreted as HTML
   const dot = document.createElement('i'); dot.className = 'status-dot'; status.append(dot);
-  status.append(document.createTextNode(data.testOnly ? ' TEST ONLY' : !data.connected ? ' DISCONNECTED' : data.running ? ' BOT RUNNING' : ' BOT STOPPED'));
+  status.append(document.createTextNode(data.fixtureOnly ? ' TEST ONLY' : data.testOnly ? (data.connected ? ' DEMO READ-ONLY' : ' DEMO DISCONNECTED') : !data.connected ? ' DISCONNECTED' : data.running ? ' BOT RUNNING' : ' BOT STOPPED'));
   text('account-mode', data.accountType || 'UNKNOWN');
+  text('mode-title', data.fixtureOnly ? 'Offline staging preview:' : data.testOnly ? 'Deriv demo read-only monitor:' : 'Read-only dashboard:');
+  text('mode-summary', data.fixtureOnly ? 'No Deriv account or market connection is active.' : data.testOnly ? 'Live demo balance and market telemetry are connected; trading remains disabled.' : 'Telemetry is connected in read-only mode.');
   text('feed-note', data.fixtureOnly
     ? 'Offline interface preview only: no Deriv connection, account, market data, or trades.'
     : data.testOnly
@@ -75,26 +77,26 @@ function render(data) {
   text('balance', money(data.balance));
   text('pnl', signedMoney(data.dailyPnl));
   element('pnl').className = number(data.dailyPnl) ? data.dailyPnl < 0 ? 'negative' : 'positive' : '';
-  text('drawdown', number(data.drawdown) ? `${numeric(data.drawdown, 1)}%` : '—');
-  text('trades', number(data.trades) ? String(data.trades) : '—');
-  text('win-rate', data.trades > 0 ? `${numeric(data.wins / data.trades * 100, 0)}%` : '—');
-  text('streak', number(data.consecutiveLoss) && data.consecutiveLoss > 0 ? `${data.consecutiveLoss} losses` : data.trades > 0 ? '0' : '—');
-  const instrument = data.instrument || '—';
+  text('drawdown', number(data.drawdown) ? `${numeric(data.drawdown, 1)}%` : 'â€”');
+  text('trades', number(data.trades) ? String(data.trades) : 'â€”');
+  text('win-rate', data.trades > 0 ? `${numeric(data.wins / data.trades * 100, 0)}%` : 'â€”');
+  text('streak', number(data.consecutiveLoss) && data.consecutiveLoss > 0 ? `${data.consecutiveLoss} losses` : data.trades > 0 ? '0' : 'â€”');
+  const instrument = data.instrument || 'â€”';
   text('instrument-chart', instrument);
   text('instrument-setting', instrument);
   text('stake-setting', money(data.baseStake));
-  text('dd-setting', number(data.maxDD) ? `${numeric(data.maxDD, 1)}%` : '—');
-  text('target-setting', number(data.dailyTarget) ? `${numeric(data.dailyTarget, 1)}%` : '—');
+  text('dd-setting', number(data.maxDD) ? `${numeric(data.maxDD, 1)}%` : 'â€”');
+  text('target-setting', number(data.dailyTarget) ? `${numeric(data.dailyTarget, 1)}%` : 'â€”');
   text('price', numeric(data.lastPrice));
   renderChart(data.priceHistory);
   const ind = data.indicators || {};
   setBar('rsi', ind.rsi, numeric(ind.rsi, 1));
   setBar('stoch', ind.stochRsi, numeric(ind.stochRsi, 1));
-  setBar('ema', ind.emaSignal === 'up' ? 80 : ind.emaSignal === 'down' ? 20 : null, ind.emaSignal === 'up' ? 'Bullish' : ind.emaSignal === 'down' ? 'Bearish' : '—');
-  setBar('macd', number(ind.macd) ? ind.macd > 0 ? 74 : 26 : null, number(ind.macd) ? numeric(ind.macd, 4) : '—');
-  setBar('squeeze', ind.squeeze === true ? 95 : ind.squeeze === false ? 25 : null, ind.squeeze === null ? '—' : ind.squeeze ? 'Yes' : 'No');
-  setBar('spike', ind.spike === true ? 95 : ind.spike === false ? 20 : null, ind.spike === null ? '—' : ind.spike ? 'Detected' : 'None');
-  text('active-signal', data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()}` : 'No signal reported');
+  setBar('ema', ind.emaSignal === 'up' ? 80 : ind.emaSignal === 'down' ? 20 : null, ind.emaSignal === 'up' ? 'Bullish' : ind.emaSignal === 'down' ? 'Bearish' : 'â€”');
+  setBar('macd', number(ind.macd) ? ind.macd > 0 ? 74 : 26 : null, number(ind.macd) ? numeric(ind.macd, 4) : 'â€”');
+  setBar('squeeze', ind.squeeze === true ? 95 : ind.squeeze === false ? 25 : null, ind.squeeze === null ? 'â€”' : ind.squeeze ? 'Yes' : 'No');
+  setBar('spike', ind.spike === true ? 95 : ind.spike === false ? 20 : null, ind.spike === null ? 'â€”' : ind.spike ? 'Detected' : 'None');
+  text('active-signal', data.currentSignal ? `${data.currentSignal.strategy} Â· ${data.currentSignal.dir.toUpperCase()}` : 'No signal reported');
   text('trade-source', data.tradeSource || 'BOT REPORTED');
   const list = element('trade-list'); list.replaceChildren();
   if (!Array.isArray(data.recentTrades) || !data.recentTrades.length) {
@@ -127,7 +129,7 @@ async function poll() {
     element('connection').classList.remove('online');
     text('connection', failureCount > 1 ? 'CONNECTION LOST' : 'RETRYING');
     text('feed-note', 'Dashboard is not receiving data. The last values shown may be stale.');
-    text('updated', 'STALE · Last successful update retained');
+    text('updated', 'STALE Â· Last successful update retained');
   }
 }
 
@@ -146,3 +148,4 @@ element('logout').addEventListener('click', async () => {
 });
 poll();
 setInterval(poll, 3000);
+
