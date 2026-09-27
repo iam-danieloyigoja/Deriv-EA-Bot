@@ -250,6 +250,13 @@ function onTick(tick) {
   if (signal) placeDemoTrade(signal);
 }
 
+function failTradeClosed(stage, message) {
+  state.inTrade = false;
+  state.currentSignal = null;
+  state.stopped = true;
+  console.error(`FINAL DEMO ${stage} failed; scanner auto-paused: ${message}`);
+}
+
 function placeDemoTrade(signal) {
   if (state.stopped || state.inTrade || state.trades >= MAX_DEMO_TRADES) return;
   if (!state.symbol) return;
@@ -261,6 +268,8 @@ function placeDemoTrade(signal) {
   }
 
   const stake = normalizeTestStake(config.BASE_STAKE);
+  const contractType = signal.dir === 'up' ? 'CALL' : 'PUT';
+
   state.inTrade = true;
   state.currentSignal = signal;
 
@@ -268,39 +277,66 @@ function placeDemoTrade(signal) {
 
   try {
     sendDemo({
-      buy: 1,
-      price: stake,
-      parameters: {
-        contract_type: signal.dir === 'up' ? 'CALL' : 'PUT',
-        underlying_symbol: state.symbol,
-        duration: 5,
-        duration_unit: 't',
-        basis: 'stake',
-        currency: 'USD',
-      },
-    }, msg => {
-      if (msg.error) {
-        state.inTrade = false;
-        state.currentSignal = null;
-        console.error('FINAL DEMO order rejected:', msg.error.message || msg.error.code || 'unknown');
+      proposal: 1,
+      amount: stake,
+      basis: 'stake',
+      contract_type: contractType,
+      currency: 'USD',
+      duration: 5,
+      duration_unit: 't',
+      underlying_symbol: state.symbol,
+    }, proposalMsg => {
+      if (proposalMsg.error) {
+        failTradeClosed('proposal', proposalMsg.error.message || proposalMsg.error.code || 'unknown');
         return;
       }
 
-      const contractId = msg && msg.buy && msg.buy.contract_id;
-      if (!contractId) {
-        state.inTrade = false;
-        state.currentSignal = null;
-        console.error('FINAL DEMO buy response missing contract id.');
+      const proposal = proposalMsg && proposalMsg.proposal;
+      const proposalId = proposal && proposal.id;
+      const askPrice = Number(proposal && proposal.ask_price);
+
+      if (
+        typeof proposalId !== 'string' ||
+        !proposalId ||
+        !Number.isFinite(askPrice) ||
+        askPrice <= 0 ||
+        askPrice > MAX_TEST_STAKE
+      ) {
+        failTradeClosed('proposal validation', 'Proposal was missing a safe proposal id/price.');
         return;
       }
 
-      console.log('FINAL DEMO contract opened:', contractId);
-      sendDemo({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
+      console.log('FINAL DEMO proposal accepted:', proposalId, 'ask', askPrice.toFixed(2));
+
+      try {
+        sendDemo({
+          buy: proposalId,
+          price: askPrice,
+        }, buyMsg => {
+          if (buyMsg.error) {
+            failTradeClosed('buy', buyMsg.error.message || buyMsg.error.code || 'unknown');
+            return;
+          }
+
+          const contractId = buyMsg && buyMsg.buy && buyMsg.buy.contract_id;
+          if (!contractId) {
+            failTradeClosed('buy validation', 'Buy response missing contract id.');
+            return;
+          }
+
+          console.log('FINAL DEMO contract opened:', contractId);
+          try {
+            sendDemo({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
+          } catch (error) {
+            failTradeClosed('contract subscription', error.message);
+          }
+        });
+      } catch (error) {
+        failTradeClosed('buy', error.message);
+      }
     });
   } catch (error) {
-    state.inTrade = false;
-    state.currentSignal = null;
-    console.error('FINAL DEMO order error:', error.message);
+    failTradeClosed('proposal', error.message);
   }
 }
 

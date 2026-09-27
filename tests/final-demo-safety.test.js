@@ -34,10 +34,48 @@ test('only a Deriv demo websocket URL is accepted', () => {
   );
 });
 
-test('request gate permits demo buy lifecycle but blocks sell and unrelated actions', () => {
-  assert.doesNotThrow(() => assertAllowedDemoRequest({ buy: 1, price: .35, parameters: {} }));
-  assert.doesNotThrow(() => assertAllowedDemoRequest({ proposal_open_contract: 1, contract_id: 123, subscribe: 1 }));
-  assert.doesNotThrow(() => assertAllowedDemoRequest({ ticks: 'R_100', subscribe: 1 }));
+test('request gate permits only proposal-id demo purchase lifecycle', () => {
+  assert.doesNotThrow(() => assertAllowedDemoRequest({
+    proposal: 1,
+    amount: .35,
+    basis: 'stake',
+    contract_type: 'CALL',
+    currency: 'USD',
+    duration: 5,
+    duration_unit: 't',
+    underlying_symbol: 'BOOM500',
+  }));
+
+  assert.doesNotThrow(() => assertAllowedDemoRequest({
+    buy: 'safe-demo-proposal-id',
+    price: .35,
+  }));
+
+  assert.doesNotThrow(() => assertAllowedDemoRequest({
+    proposal_open_contract: 1,
+    contract_id: 123,
+    subscribe: 1,
+  }));
+
+  assert.throws(
+    () => assertAllowedDemoRequest({
+      buy: 1,
+      price: .35,
+      parameters: { basis: 'stake' },
+    }),
+    /Blocked invalid buy request/
+  );
+
+  assert.throws(() => assertAllowedDemoRequest({
+    proposal: 1,
+    amount: .51,
+    basis: 'stake',
+    contract_type: 'CALL',
+    currency: 'USD',
+    duration: 5,
+    duration_unit: 't',
+    underlying_symbol: 'BOOM500',
+  }), /Blocked invalid proposal request/);
 
   assert.throws(() => assertAllowedDemoRequest({ sell: 123 }), /Blocked Deriv request/);
   assert.throws(() => assertAllowedDemoRequest({ cashier: 'payments' }), /Blocked Deriv request/);

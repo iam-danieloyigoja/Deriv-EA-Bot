@@ -30,9 +30,46 @@ function assertAllowedDemoRequest(payload) {
     throw new Error('Blocked Deriv request in final demo acceptance mode.');
   }
 
-  const allowedPrimary = ['balance', 'ticks', 'active_symbols', 'ping', 'buy', 'proposal_open_contract'];
-  if (!allowedPrimary.some(key => Object.prototype.hasOwnProperty.call(payload, key))) {
-    throw new Error('Unapproved Deriv request in final demo acceptance mode.');
+  const primaries = ['balance', 'ticks', 'active_symbols', 'ping', 'proposal', 'buy', 'proposal_open_contract']
+    .filter(key => Object.prototype.hasOwnProperty.call(payload, key));
+
+  if (primaries.length !== 1) {
+    throw new Error('Exactly one approved Deriv request type is required.');
+  }
+
+  const primary = primaries[0];
+
+  if (primary === 'proposal') {
+    const amount = Number(payload.amount);
+    if (
+      payload.proposal !== 1 ||
+      !Number.isFinite(amount) ||
+      amount < MIN_TEST_STAKE ||
+      amount > MAX_TEST_STAKE ||
+      payload.basis !== 'stake' ||
+      !['CALL', 'PUT'].includes(payload.contract_type) ||
+      payload.currency !== 'USD' ||
+      payload.duration !== 5 ||
+      payload.duration_unit !== 't' ||
+      typeof payload.underlying_symbol !== 'string' ||
+      !payload.underlying_symbol
+    ) {
+      throw new Error('Blocked invalid proposal request in final demo acceptance mode.');
+    }
+  }
+
+  if (primary === 'buy') {
+    const price = Number(payload.price);
+    if (
+      typeof payload.buy !== 'string' ||
+      !payload.buy ||
+      !Number.isFinite(price) ||
+      price <= 0 ||
+      price > MAX_TEST_STAKE ||
+      Object.prototype.hasOwnProperty.call(payload, 'parameters')
+    ) {
+      throw new Error('Blocked invalid buy request in final demo acceptance mode.');
+    }
   }
 
   return payload;
