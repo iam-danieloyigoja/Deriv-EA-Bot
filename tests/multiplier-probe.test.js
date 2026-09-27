@@ -15,7 +15,7 @@ const {
 } = require('../staging/demo-multiplier-probe-safety');
 
 test('multiplier probe scope is bounded', () => {
-  assert.equal(PROBE_STAKE, .35);
+  assert.equal(PROBE_STAKE, 1.00);
   assert.deepEqual(INSTRUMENTS, ['BOOM500', 'BOOM1000', 'CRASH500', 'CRASH1000']);
   assert.deepEqual(PROBE_MULTIPLIERS, [10, 20, 50, 100, 200, 500]);
   assert.equal(PROBE_RISK_PROFILES.length, 4);
@@ -46,7 +46,7 @@ test('multiplier proposal builder uses proposal shape without purchase fields', 
   });
 
   assert.equal(payload.proposal, 1);
-  assert.equal(payload.amount, .35);
+  assert.equal(payload.amount, 1.00);
   assert.equal(payload.basis, 'stake');
   assert.equal(payload.contract_type, 'MULTUP');
   assert.equal(payload.currency, 'USD');

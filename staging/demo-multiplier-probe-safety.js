@@ -1,6 +1,6 @@
 'use strict';
 
-const PROBE_STAKE = 0.35;
+const PROBE_STAKE = 1.00;
 const PROBE_MULTIPLIERS = Object.freeze([10, 20, 50, 100, 200, 500]);
 const PROBE_RISK_PROFILES = Object.freeze([
   Object.freeze({ name: 'none', limit_order: null }),
@@ -37,7 +37,7 @@ function assertProposalOnlyRequest(payload) {
 
   if (Object.prototype.hasOwnProperty.call(payload, 'proposal')) {
     if (payload.proposal !== 1) throw new Error('Invalid proposal probe.');
-    if (payload.amount !== PROBE_STAKE) throw new Error('Probe stake is locked.');
+    if (payload.amount !== PROBE_STAKE) throw new Error("Probe stake is locked to Deriv's observed minimum.");
     if (payload.basis !== 'stake') throw new Error('Proposal basis must be stake.');
     if (!MULTIPLIER_TYPES.includes(payload.contract_type)) throw new Error('Only multiplier contracts may be probed.');
     if (payload.currency !== 'USD') throw new Error('Probe currency must be USD.');
