@@ -10,6 +10,7 @@ const {
   MAX_TEST_STAKE,
   MAX_SESSION_LOSS,
   PROPOSAL_DURATIONS,
+  selectDirectionalContracts,
   assertDemoWebSocketUrl,
   normalizeTestStake,
   assertAllowedDemoRequest,
@@ -74,6 +75,9 @@ const state = {
   pending: new Map(),
   settledContracts: new Set(),
   symbol: null,
+  directionalContracts: { up: null, down: null },
+  contractsReady: false,
+  executionFault: null,
 };
 
 function apiRequest(method, path) {
@@ -167,10 +171,53 @@ function subscribeBalance() {
   });
 }
 
+function discoverDirectionalContracts(symbol) {
+  state.contractsReady = false;
+  state.directionalContracts = { up: null, down: null };
+
+  sendDemo({ contracts_for: symbol }, msg => {
+    if (msg.error) {
+      state.executionFault = 'Contract capability discovery failed: ' + (msg.error.message || msg.error.code || 'unknown');
+      state.stopped = true;
+      console.error('FINAL DEMO capability discovery failed:', state.executionFault);
+      return;
+    }
+
+    const available = msg && msg.contracts_for && msg.contracts_for.available;
+    const selection = selectDirectionalContracts(available);
+
+    const observed = selection.observed
+      .map(item => [item.type, item.sentiment || '-', item.category || '-'].join('/'))
+      .join(', ');
+
+    console.log('FINAL DEMO contracts_for observed:', observed || 'none');
+
+    if (!selection.up || !selection.down) {
+      state.executionFault =
+        'No compatible Rise/Fall directional pair is offered for ' + config.INSTRUMENT +
+        ' on this demo account.';
+      state.stopped = true;
+      console.error('FINAL DEMO capability gate:', state.executionFault);
+      return;
+    }
+
+    state.directionalContracts = { up: selection.up, down: selection.down };
+    state.contractsReady = true;
+    state.executionFault = null;
+
+    console.log(
+      'FINAL DEMO directional contracts:',
+      'UP=' + selection.up,
+      'DOWN=' + selection.down
+    );
+  });
+}
+
 function resolveAndSubscribeTicks() {
   sendDemo({ active_symbols: 'brief' }, msg => {
     if (msg.error) throw new Error('Active-symbol request rejected: ' + msg.error.message);
     state.symbol = resolveSymbolFromList(msg.active_symbols);
+    discoverDirectionalContracts(state.symbol);
     subscribeTicks(state.symbol);
   });
 }
@@ -371,8 +418,18 @@ function placeDemoTrade(signal) {
     return;
   }
 
+  if (!state.contractsReady) {
+    failTradeClosed('capability gate', state.executionFault || 'Compatible directional contracts have not been discovered.');
+    return;
+  }
+
   const stake = normalizeTestStake(config.BASE_STAKE);
-  const contractType = signal.dir === 'up' ? 'CALL' : 'PUT';
+  const contractType = state.directionalContracts[signal.dir];
+
+  if (!contractType) {
+    failTradeClosed('capability gate', 'No compatible contract type for signal direction ' + signal.dir + '.');
+    return;
+  }
 
   state.inTrade = true;
   state.currentSignal = signal;
@@ -505,6 +562,9 @@ function resetMarketState() {
   state.lastPrice = null;
   state.currentSignal = null;
   state.symbol = null;
+  state.directionalContracts = { up: null, down: null };
+  state.contractsReady = false;
+  state.executionFault = null;
   state.indicators = { rsi: null, stochRsi: null, emaSignal: null, macd: null, squeeze: null, spike: null };
 }
 
@@ -593,6 +653,8 @@ const controls = {
     if (body.action === 'start') {
       if (state.inTrade) throw controlError('A demo contract is already open.');
       if (state.trades >= MAX_DEMO_TRADES) throw controlError('Final demo acceptance run is already complete.');
+      if (state.executionFault) throw controlError(state.executionFault);
+      if (!state.contractsReady) throw controlError('Contract capability discovery is not ready yet.');
       state.stopped = false;
       state.currentSignal = state.ticks.length >= 30 ? analyze(state.ticks) : null;
       return { monitoringActive: true, executionEnabled: true };
