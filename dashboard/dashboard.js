@@ -35,6 +35,7 @@ function renderChart(prices) {
 
   const isEmpty = points.length < 2;
   element('chart-empty').hidden = !isEmpty;
+
   if (isEmpty) {
     element('chart-line').setAttribute('d', '');
     element('chart-area').setAttribute('d', '');
@@ -86,22 +87,35 @@ function fillSettings(data) {
 
   select.value = data.instrument || instruments[0];
   element('stake-input').value = number(data.baseStake) ? data.baseStake.toFixed(2) : '0.35';
-  element('dd-input').value = number(data.maxDD) ? data.maxDD.toFixed(1) : '10';
-  element('target-input').value = number(data.dailyTarget) ? data.dailyTarget.toFixed(1) : '15';
+  element('dd-input').value = number(data.maxDD) ? data.maxDD.toFixed(1) : '8';
+  element('target-input').value = number(data.dailyTarget) ? data.dailyTarget.toFixed(1) : '12';
 }
 
 function renderControls(data) {
-  const enabled = data.controlsEnabled === true && data.executionEnabled === false;
-  const controls = ['instrument-input', 'stake-input', 'dd-input', 'target-input', 'reset-settings', 'apply-settings', 'toggle-monitor'];
+  const enabled = data.controlsEnabled === true && data.executionEnabled === true;
+  const complete = data.acceptanceComplete === true;
+  const lockedByTrade = data.inTrade === true;
+  const controls = ['instrument-input', 'stake-input', 'dd-input', 'target-input', 'reset-settings', 'apply-settings'];
 
-  controls.forEach(id => { element(id).disabled = !enabled || controlBusy; });
-  text('control-mode-label', enabled ? 'DEMO CONTROLS' : 'LOCKED');
-  text('control-hint', enabled
-    ? 'Controls affect demo scanning and in-memory settings only. Buy/sell/order execution is not implemented.'
-    : 'Demo controls are locked. No order endpoint is enabled.');
+  controls.forEach(id => {
+    element(id).disabled = !enabled || controlBusy || complete || lockedByTrade;
+  });
 
   const toggle = element('toggle-monitor');
-  toggle.textContent = data.monitoringActive ? 'STOP SCANNING' : 'START SCANNING';
+  toggle.disabled = !enabled || controlBusy || complete || lockedByTrade;
+
+  text('control-mode-label', complete ? 'TEST COMPLETE' : enabled ? 'DEMO EXECUTION' : 'LOCKED');
+
+  if (complete) {
+    text('control-hint', 'Acceptance run completed. The service auto-paused after the maximum number of demo trades.');
+    toggle.textContent = 'FINAL DEMO TEST COMPLETE';
+  } else if (lockedByTrade) {
+    text('control-hint', 'A demo contract is open. Configuration and stop/start controls are temporarily locked until settlement.');
+    toggle.textContent = 'DEMO CONTRACT OPEN';
+  } else {
+    text('control-hint', `Demo contracts only. Maximum ${data.maxDemoTrades || 3} completed trades. Stake hard-capped at $${numeric(data.maxTestStake || .5, 2)}. No martingale. Live-account execution is blocked.`);
+    toggle.textContent = data.monitoringActive ? 'STOP FINAL DEMO TEST' : 'START FINAL DEMO TEST';
+  }
 
   if (!settingsDirty) fillSettings(data);
 }
@@ -115,23 +129,27 @@ function render(data) {
   status.replaceChildren();
   const dot = document.createElement('i'); dot.className = 'status-dot'; status.append(dot);
 
-  const statusText = data.controlsEnabled
-    ? data.connected ? (data.monitoringActive ? ' DEMO SCANNING' : ' DEMO PAUSED') : ' DEMO DISCONNECTED'
-    : data.connected ? ' DEMO READ-ONLY' : ' DEMO DISCONNECTED';
+  let statusText = ' DEMO DISCONNECTED';
+  if (data.connected) {
+    if (data.acceptanceComplete) statusText = ' TEST COMPLETE';
+    else if (data.inTrade) statusText = ' DEMO IN TRADE';
+    else if (data.monitoringActive) statusText = ' DEMO EXECUTING';
+    else statusText = ' DEMO PAUSED';
+  }
   status.append(document.createTextNode(statusText));
 
   text('account-mode', data.accountType || 'UNKNOWN');
-  text('mode-title', data.controlsEnabled ? 'Deriv demo control sandbox:' : 'Deriv demo read-only monitor:');
-  text('mode-summary', data.controlsEnabled
-    ? 'Live demo telemetry is connected. Start/stop and settings affect the demo scanner only.'
-    : 'Live demo balance and market telemetry are connected; controls are locked.');
-  text('feed-note', 'Order execution remains disabled.');
+  text('mode-title', 'Final demo acceptance test:');
+  text('mode-summary', data.executionEnabled
+    ? `Real Deriv demo contracts are enabled for this acceptance run. Maximum ${data.maxDemoTrades || 3} completed trades.`
+    : 'Demo execution is not enabled.');
+  text('feed-note', 'Live-account execution is blocked.');
 
   text('balance', money(data.balance));
   text('pnl', signedMoney(data.dailyPnl));
   element('pnl').className = number(data.dailyPnl) ? data.dailyPnl < 0 ? 'negative' : 'positive' : '';
   text('drawdown', number(data.drawdown) ? `${numeric(data.drawdown, 1)}%` : '—');
-  text('trades', number(data.trades) ? String(data.trades) : '0');
+  text('trades', `${number(data.trades) ? data.trades : 0} / ${data.maxDemoTrades || 3}`);
   text('win-rate', data.trades > 0 ? `${numeric(data.wins / data.trades * 100, 0)}%` : '—');
   text('streak', number(data.consecutiveLoss) && data.consecutiveLoss > 0 ? `${data.consecutiveLoss} losses` : data.trades > 0 ? '0' : '—');
 
@@ -148,16 +166,19 @@ function render(data) {
   setBar('squeeze', ind.squeeze === true ? 95 : ind.squeeze === false ? 25 : null, ind.squeeze === null ? '—' : ind.squeeze ? 'Yes' : 'No');
   setBar('spike', ind.spike === true ? 95 : ind.spike === false ? 20 : null, ind.spike === null ? '—' : ind.spike ? 'Detected' : 'None');
 
-  text('active-signal', data.monitoringActive
-    ? data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()}` : 'No signal reported'
-    : 'Scanner paused');
+  let active = 'Test paused';
+  if (data.acceptanceComplete) active = 'Acceptance run complete';
+  else if (data.inTrade) active = 'Demo contract open';
+  else if (data.monitoringActive) active = data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()}` : 'Scanning for demo signal';
+  text('active-signal', active);
 
-  text('trade-source', data.tradeSource || 'ORDER EXECUTION DISABLED');
+  text('trade-source', data.tradeSource || 'DERIV DEMO CONTRACTS');
   const list = element('trade-list'); list.replaceChildren();
+
   if (!Array.isArray(data.recentTrades) || !data.recentTrades.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-trades';
-    empty.textContent = 'No trades reported. Demo order execution is disabled in this phase.';
+    empty.textContent = 'No demo contracts completed yet.';
     list.append(empty);
   } else {
     for (const trade of data.recentTrades) {
@@ -241,14 +262,13 @@ element('reset-settings').addEventListener('click', () => {
 });
 
 element('apply-settings').addEventListener('click', async () => {
-  const payload = {
+  await postControl({
     action: 'update-config',
     instrument: element('instrument-input').value,
     baseStake: Number(element('stake-input').value),
     maxDD: Number(element('dd-input').value),
     dailyTarget: Number(element('target-input').value),
-  };
-  await postControl(payload);
+  });
 });
 
 element('toggle-monitor').addEventListener('click', async () => {

@@ -97,26 +97,65 @@ function safeHistory(list, max) {
 function snapshot(state, config) {
   const simulation = config.DEMO_MODE === true;
   const fixtureOnly = process.env.STAGING_FIXTURE_ONLY === 'true';
-  const demoReadOnly = process.env.READ_ONLY_DEMO === 'true';
+  const demoEnvironment =
+    process.env.READ_ONLY_DEMO === 'true' ||
+    process.env.FINAL_DEMO_EXECUTION === 'true';
+
   const controlsEnabled =
     process.env.SAFE_DEMO_CONTROLS === 'true' &&
     process.env.DASHBOARD_TEST_ONLY === 'true' &&
-    demoReadOnly &&
+    demoEnvironment &&
     simulation;
+
+  const executionEnabled =
+    process.env.FINAL_DEMO_EXECUTION === 'true' &&
+    process.env.DASHBOARD_TEST_ONLY === 'true' &&
+    config.EXECUTION_ENABLED === true &&
+    simulation;
+
   const connected = Boolean(state.ws && state.ws.readyState === 1);
   const instruments = Array.isArray(config.ALLOWED_INSTRUMENTS)
     ? config.ALLOWED_INSTRUMENTS.filter(v => typeof v === 'string').slice(0, 16)
     : [];
+
+  const maxDemoTrades = Number.isSafeInteger(config.MAX_DEMO_TRADES) ? config.MAX_DEMO_TRADES : null;
+  const acceptanceComplete = maxDemoTrades !== null && state.trades >= maxDemoTrades;
 
   return {
     observedAt: new Date().toISOString(),
     testOnly: process.env.DASHBOARD_TEST_ONLY === 'true',
     fixtureOnly,
     controlsEnabled,
-    executionEnabled: false,
-    accountType: fixtureOnly ? 'OFFLINE PREVIEW - NO ACCOUNT' : demoReadOnly ? 'DERIV DEMO - CONTROLS' : simulation ? 'SIMULATION' : 'REAL - READ ONLY',
-    balanceSource: fixtureOnly ? 'NO ACCOUNT OR BALANCE DATA' : demoReadOnly ? 'DERIV DEMO BALANCE' : simulation ? 'BOT-SIMULATED BALANCE' : 'BOT REPORTED BALANCE',
-    tradeSource: fixtureOnly ? 'OFFLINE - NO TRADES' : demoReadOnly ? 'ORDER EXECUTION DISABLED' : simulation ? 'SIMULATED RESULTS' : 'BOT REPORTED RESULTS',
+    executionEnabled,
+    acceptanceComplete,
+    maxDemoTrades,
+    maxTestStake: safeNumber(config.MAX_TEST_STAKE),
+    inTrade: Boolean(state.inTrade),
+    accountType: fixtureOnly
+      ? 'OFFLINE PREVIEW - NO ACCOUNT'
+      : executionEnabled
+        ? 'DERIV DEMO - FINAL TEST'
+        : demoEnvironment
+          ? 'DERIV DEMO - CONTROLS'
+          : simulation
+            ? 'SIMULATION'
+            : 'REAL - READ ONLY',
+    balanceSource: fixtureOnly
+      ? 'NO ACCOUNT OR BALANCE DATA'
+      : demoEnvironment
+        ? 'DERIV DEMO BALANCE'
+        : simulation
+          ? 'BOT-SIMULATED BALANCE'
+          : 'BOT REPORTED BALANCE',
+    tradeSource: fixtureOnly
+      ? 'OFFLINE - NO TRADES'
+      : executionEnabled
+        ? 'DERIV DEMO CONTRACTS'
+        : demoEnvironment
+          ? 'ORDER EXECUTION DISABLED'
+          : simulation
+            ? 'SIMULATED RESULTS'
+            : 'BOT REPORTED RESULTS',
     connected,
     monitoringActive: Boolean(connected && !state.stopped),
     running: Boolean(connected && !state.stopped),
@@ -163,9 +202,11 @@ function snapshot(state, config) {
 
 function createDashboardHandler({ state, config, controls = null }) {
   if (!state || !config) throw new Error('createDashboardHandler requires state and config');
+
   const password = process.env.DASHBOARD_PASSWORD || '';
   const passwordConfigured = password.length >= 16;
   const targetHash = passwordConfigured ? crypto.scryptSync(password, PASSWORD_SALT, 64) : null;
+
   if (!passwordConfigured) {
     console.warn('DASHBOARD_PASSWORD must be set to at least 16 characters; dashboard login is disabled.');
   }
@@ -182,6 +223,7 @@ function createDashboardHandler({ state, config, controls = null }) {
     let pathname;
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname; }
     catch { return sendText(res, 400, 'Bad request'); }
+
     const isPost = req.method === 'POST';
     const isGet = req.method === 'GET';
 
@@ -192,10 +234,14 @@ function createDashboardHandler({ state, config, controls = null }) {
     if (pathname === '/api/dashboard/control') {
       if (!isPost) return sendText(res, 405, 'Method not allowed');
 
+      const demoEnvironment =
+        process.env.READ_ONLY_DEMO === 'true' ||
+        process.env.FINAL_DEMO_EXECUTION === 'true';
+
       const safeControlMode =
         process.env.SAFE_DEMO_CONTROLS === 'true' &&
         process.env.DASHBOARD_TEST_ONLY === 'true' &&
-        process.env.READ_ONLY_DEMO === 'true' &&
+        demoEnvironment &&
         config.DEMO_MODE === true &&
         controls &&
         typeof controls.apply === 'function';
@@ -224,6 +270,7 @@ function createDashboardHandler({ state, config, controls = null }) {
     if (pathname === '/api/dashboard/login' && isPost) {
       if (!sameOrigin(req)) return sendJson(res, 403, { error: 'Origin rejected' });
       if (!passwordConfigured) return sendJson(res, 503, { error: 'Dashboard password is not configured' });
+
       const peer = req.socket.remoteAddress || 'unknown';
       const prior = failures.get(peer) || { count: 0, until: 0 };
       if (prior.until > Date.now()) return sendJson(res, 429, { error: 'Too many attempts. Try again later.' });
@@ -231,12 +278,14 @@ function createDashboardHandler({ state, config, controls = null }) {
       return readJsonBody(req, res, suppliedBody => {
         const supplied = suppliedBody.password;
         if (typeof supplied !== 'string' || supplied.length > 1024) return sendJson(res, 400, { error: 'Invalid request' });
+
         const digest = crypto.scryptSync(supplied, PASSWORD_SALT, 64);
         if (!crypto.timingSafeEqual(digest, targetHash)) {
           const count = prior.count + 1;
           failures.set(peer, { count, until: count >= 6 ? Date.now() + 15 * 60 * 1000 : 0 });
           return sendJson(res, 401, { error: 'Invalid password' });
         }
+
         failures.delete(peer);
         const id = crypto.randomBytes(15).toString('base64url');
         const until = Date.now() + SESSION_SECONDS * 1000;
