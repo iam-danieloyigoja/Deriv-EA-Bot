@@ -5,6 +5,16 @@ const MIN_TEST_STAKE = 0.35;
 const MAX_TEST_STAKE = 0.50;
 const MAX_SESSION_LOSS = 1.50;
 
+const PROPOSAL_DURATIONS = Object.freeze([
+  Object.freeze({ duration: 5, duration_unit: 't', label: '5 ticks' }),
+  Object.freeze({ duration: 10, duration_unit: 't', label: '10 ticks' }),
+  Object.freeze({ duration: 15, duration_unit: 't', label: '15 ticks' }),
+  Object.freeze({ duration: 30, duration_unit: 't', label: '30 ticks' }),
+  Object.freeze({ duration: 1, duration_unit: 'm', label: '1 minute' }),
+  Object.freeze({ duration: 2, duration_unit: 'm', label: '2 minutes' }),
+  Object.freeze({ duration: 5, duration_unit: 'm', label: '5 minutes' }),
+]);
+
 function assertDemoWebSocketUrl(url) {
   if (typeof url !== 'string' || !/\/trading\/v1\/options\/ws\/demo\?otp=/.test(url)) {
     throw new Error('Demo WebSocket URL required. Live-account connection refused.');
@@ -18,6 +28,12 @@ function normalizeTestStake(value) {
     throw new Error(`Demo stake must be between ${MIN_TEST_STAKE.toFixed(2)} and ${MAX_TEST_STAKE.toFixed(2)}.`);
   }
   return Math.round(stake * 100) / 100;
+}
+
+function isAllowedDuration(duration, durationUnit) {
+  return PROPOSAL_DURATIONS.some(item =>
+    item.duration === duration && item.duration_unit === durationUnit
+  );
 }
 
 function assertAllowedDemoRequest(payload) {
@@ -49,8 +65,7 @@ function assertAllowedDemoRequest(payload) {
       payload.basis !== 'stake' ||
       !['CALL', 'PUT'].includes(payload.contract_type) ||
       payload.currency !== 'USD' ||
-      payload.duration !== 5 ||
-      payload.duration_unit !== 't' ||
+      !isAllowedDuration(payload.duration, payload.duration_unit) ||
       typeof payload.underlying_symbol !== 'string' ||
       !payload.underlying_symbol
     ) {
@@ -80,7 +95,9 @@ module.exports = {
   MIN_TEST_STAKE,
   MAX_TEST_STAKE,
   MAX_SESSION_LOSS,
+  PROPOSAL_DURATIONS,
   assertDemoWebSocketUrl,
   normalizeTestStake,
+  isAllowedDuration,
   assertAllowedDemoRequest,
 };

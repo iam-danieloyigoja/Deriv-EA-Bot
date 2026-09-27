@@ -9,6 +9,7 @@ const {
   MIN_TEST_STAKE,
   MAX_TEST_STAKE,
   MAX_SESSION_LOSS,
+  PROPOSAL_DURATIONS,
   assertDemoWebSocketUrl,
   normalizeTestStake,
   assertAllowedDemoRequest,
@@ -257,6 +258,109 @@ function failTradeClosed(stage, message) {
   console.error(`FINAL DEMO ${stage} failed; scanner auto-paused: ${message}`);
 }
 
+function requestCompatibleProposal({ signal, stake, contractType, attempt = 0, errors = [] }) {
+  if (attempt >= PROPOSAL_DURATIONS.length) {
+    failTradeClosed(
+      'proposal',
+      'No approved test duration was offered by Deriv. ' + errors.join(' | ')
+    );
+    return;
+  }
+
+  const candidate = PROPOSAL_DURATIONS[attempt];
+
+  console.log(
+    'FINAL DEMO proposal attempt:',
+    candidate.label,
+    contractType,
+    'stake',
+    stake.toFixed(2)
+  );
+
+  try {
+    sendDemo({
+      proposal: 1,
+      amount: stake,
+      basis: 'stake',
+      contract_type: contractType,
+      currency: 'USD',
+      duration: candidate.duration,
+      duration_unit: candidate.duration_unit,
+      underlying_symbol: state.symbol,
+    }, proposalMsg => {
+      if (proposalMsg.error) {
+        const message = proposalMsg.error.message || proposalMsg.error.code || 'unknown';
+        console.log('FINAL DEMO duration unavailable:', candidate.label, '-', message);
+        requestCompatibleProposal({
+          signal,
+          stake,
+          contractType,
+          attempt: attempt + 1,
+          errors: [...errors, `${candidate.label}: ${message}`],
+        });
+        return;
+      }
+
+      const proposal = proposalMsg && proposalMsg.proposal;
+      const proposalId = proposal && proposal.id;
+      const askPrice = Number(proposal && proposal.ask_price);
+
+      if (
+        typeof proposalId !== 'string' ||
+        !proposalId ||
+        !Number.isFinite(askPrice) ||
+        askPrice <= 0 ||
+        askPrice > MAX_TEST_STAKE
+      ) {
+        failTradeClosed(
+          'proposal validation',
+          `Accepted ${candidate.label} proposal was missing a safe proposal id/price.`
+        );
+        return;
+      }
+
+      console.log(
+        'FINAL DEMO proposal accepted:',
+        proposalId,
+        'duration',
+        candidate.label,
+        'ask',
+        askPrice.toFixed(2)
+      );
+
+      try {
+        sendDemo({
+          buy: proposalId,
+          price: askPrice,
+        }, buyMsg => {
+          if (buyMsg.error) {
+            failTradeClosed('buy', buyMsg.error.message || buyMsg.error.code || 'unknown');
+            return;
+          }
+
+          const contractId = buyMsg && buyMsg.buy && buyMsg.buy.contract_id;
+          if (!contractId) {
+            failTradeClosed('buy validation', 'Buy response missing contract id.');
+            return;
+          }
+
+          console.log('FINAL DEMO contract opened:', contractId, 'duration', candidate.label);
+
+          try {
+            sendDemo({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
+          } catch (error) {
+            failTradeClosed('contract subscription', error.message);
+          }
+        });
+      } catch (error) {
+        failTradeClosed('buy', error.message);
+      }
+    });
+  } catch (error) {
+    failTradeClosed('proposal', error.message);
+  }
+}
+
 function placeDemoTrade(signal) {
   if (state.stopped || state.inTrade || state.trades >= MAX_DEMO_TRADES) return;
   if (!state.symbol) return;
@@ -275,69 +379,7 @@ function placeDemoTrade(signal) {
 
   console.log('FINAL DEMO signal:', signal.strategy, signal.dir.toUpperCase(), 'stake', stake.toFixed(2));
 
-  try {
-    sendDemo({
-      proposal: 1,
-      amount: stake,
-      basis: 'stake',
-      contract_type: contractType,
-      currency: 'USD',
-      duration: 5,
-      duration_unit: 't',
-      underlying_symbol: state.symbol,
-    }, proposalMsg => {
-      if (proposalMsg.error) {
-        failTradeClosed('proposal', proposalMsg.error.message || proposalMsg.error.code || 'unknown');
-        return;
-      }
-
-      const proposal = proposalMsg && proposalMsg.proposal;
-      const proposalId = proposal && proposal.id;
-      const askPrice = Number(proposal && proposal.ask_price);
-
-      if (
-        typeof proposalId !== 'string' ||
-        !proposalId ||
-        !Number.isFinite(askPrice) ||
-        askPrice <= 0 ||
-        askPrice > MAX_TEST_STAKE
-      ) {
-        failTradeClosed('proposal validation', 'Proposal was missing a safe proposal id/price.');
-        return;
-      }
-
-      console.log('FINAL DEMO proposal accepted:', proposalId, 'ask', askPrice.toFixed(2));
-
-      try {
-        sendDemo({
-          buy: proposalId,
-          price: askPrice,
-        }, buyMsg => {
-          if (buyMsg.error) {
-            failTradeClosed('buy', buyMsg.error.message || buyMsg.error.code || 'unknown');
-            return;
-          }
-
-          const contractId = buyMsg && buyMsg.buy && buyMsg.buy.contract_id;
-          if (!contractId) {
-            failTradeClosed('buy validation', 'Buy response missing contract id.');
-            return;
-          }
-
-          console.log('FINAL DEMO contract opened:', contractId);
-          try {
-            sendDemo({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
-          } catch (error) {
-            failTradeClosed('contract subscription', error.message);
-          }
-        });
-      } catch (error) {
-        failTradeClosed('buy', error.message);
-      }
-    });
-  } catch (error) {
-    failTradeClosed('proposal', error.message);
-  }
+  requestCompatibleProposal({ signal, stake, contractType });
 }
 
 function onContractUpdate(contract) {
