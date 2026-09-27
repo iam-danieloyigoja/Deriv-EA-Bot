@@ -1,5 +1,16 @@
-'use strict';
+﻿'use strict';
 
+// DERIV_MULTIPLIER_ENTRYPOINT_ROUTER_V1_4B
+// Railway staging has intermittently launched this historical probe entrypoint
+// even when the effective deployment command points at multiplier execution.
+// Route explicitly by mutually exclusive environment mode without weakening
+// the execution module's own demo-only safety gates.
+if (process.env.MULTIPLIER_EXECUTION_TEST === 'true') {
+  if (process.env.MULTIPLIER_PROBE_ONLY === 'true') {
+    throw new Error('Multiplier execution and probe modes cannot both be enabled.');
+  }
+  require('./demo-multiplier-execution');
+} else {
 const WebSocket = require('ws');
 const https = require('node:https');
 const http = require('node:http');
@@ -260,7 +271,7 @@ function safeHtml(value) {
 function renderHtml() {
   const rows = INSTRUMENTS.map(instrument => {
     const item = state.results[instrument];
-    if (!item) return `<tr><td>${instrument}</td><td colspan="4">Waiting…</td></tr>`;
+    if (!item) return `<tr><td>${instrument}</td><td colspan="4">Waitingâ€¦</td></tr>`;
     const up = item.factors.MULTUP.map(x => 'x' + x.multiplier).join(', ') || 'none';
     const down = item.factors.MULTDOWN.map(x => 'x' + x.multiplier).join(', ') || 'none';
     const upRisk = item.riskProfiles.MULTUP.filter(x => x.accepted).map(x => x.name).join(', ') || 'none';
@@ -275,10 +286,10 @@ body{font-family:system-ui;background:#071426;color:#e7f0ff;margin:0;padding:24p
 h1{margin:0 0 8px}p{color:#bdd0e7}.safe{color:#47e0b8;font-weight:700}.warn{color:#ffd36a}
 table{width:100%;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #2b4e73;text-align:left;font-size:14px}
 small{color:#91aac7}</style></head><body><main>
-<h1>DERIV EA BOT — V1.4A MULTIPLIER PROBE</h1>
-<p class="safe">PROPOSAL ONLY — BUY/SELL EXECUTION IS NOT IMPLEMENTED.</p>
+<h1>DERIV EA BOT â€” V1.4A MULTIPLIER PROBE</h1>
+<p class="safe">PROPOSAL ONLY â€” BUY/SELL EXECUTION IS NOT IMPLEMENTED.</p>
 <div class="card"><strong>Status:</strong> ${safeHtml(state.status.toUpperCase())}<br>
-<small>Stake used for proposal pricing: $${PROBE_STAKE.toFixed(2)} · Demo account only.</small>
+<small>Stake used for proposal pricing: $${PROBE_STAKE.toFixed(2)} Â· Demo account only.</small>
 ${state.error ? `<p class="warn">${safeHtml(state.error)}</p>` : ''}</div>
 <div class="card"><table><thead><tr><th>Instrument</th><th>MULTUP factors</th><th>MULTDOWN factors</th><th>UP risk profiles</th><th>DOWN risk profiles</th></tr></thead><tbody>${rows}</tbody></table></div>
 <p><small>Refresh to see updated probe results. No contract purchase endpoint exists in this probe service.</small></p>
@@ -307,3 +318,4 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('PROPOSAL ONLY. BUY/SELL execution is not implemented.');
   startProbe();
 });
+}
