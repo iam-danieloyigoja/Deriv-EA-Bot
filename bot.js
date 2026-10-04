@@ -10,13 +10,13 @@ const WebSocket = require('ws');
 const https     = require('https');
 const http      = require('http');
 const chalk     = require('chalk');
-const { createDashboardHandler } = require('./dashboard/server');
+const { createSimulatorDashboardHandler } = require('./dashboard/simulator-server');
 
 // ─────────────────────────────────────────────────────────────
 //  CONFIG — all values come from Railway → Variables tab
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  DERIV_API_TOKEN : process.env.DERIV_API_TOKEN,
+  DERIV_API_TOKEN : process.env.DERIV_DEMO_API_TOKEN,
   DERIV_APP_ID    : process.env.DERIV_APP_ID    || '34p4exLBj1NDTx15WfqnE',
   DEMO_MODE       : process.env.DEMO_MODE !== 'false',
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
@@ -29,9 +29,17 @@ const CONFIG = {
   PORT            : parseInt(process.env.PORT             || '8080'),
 };
 
-if (process.env.DASHBOARD_TEST_ONLY !== 'true' || CONFIG.DEMO_MODE !== true) {
-  throw new Error('Integration package requires DASHBOARD_TEST_ONLY=true and DEMO_MODE=true on an isolated test service.');
+if (
+  process.env.SIMULATOR_ONLY !== 'true' ||
+  process.env.DASHBOARD_TEST_ONLY !== 'true' ||
+  CONFIG.DEMO_MODE !== true
+) {
+  throw new Error('Simulator integration requires SIMULATOR_ONLY=true, DASHBOARD_TEST_ONLY=true and DEMO_MODE=true.');
 }
+if (process.env.DERIV_API_TOKEN) {
+  throw new Error('DERIV_API_TOKEN must not exist on the isolated simulator service.');
+}
+CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
 const SYMBOL_MAP = {
   BOOM500:'R_100', BOOM1000:'R_75', CRASH500:'R_50', CRASH1000:'R_25',
@@ -44,7 +52,7 @@ const S = {
   ws:null, accountId:null,
   balance:0, startBalance:0, lowestBalance:Infinity,
   wins:0, losses:0, trades:0, consecutiveLoss:0,
-  stopped:false, ticks:[], inTrade:false,
+  stopped:true, manualStop:true, ticks:[], inTrade:false,
   reqId:1, pendingCbs:{}, dailyPnl:0,
   sessionStart:new Date(), reconnects:0,
   recentLogs:[], recentTrades:[],
@@ -77,7 +85,95 @@ const log = {
 // ─────────────────────────────────────────────────────────────
 // Replacement dashboard is served from ./dashboard/ (authenticated + read-only).
 
-const server = http.createServer(createDashboardHandler({ state: S, config: CONFIG }));
+function simulatorControlError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function reconnectSimulatorFeed() {
+  const old = S.ws;
+  S.ws = null;
+  S.pendingCbs = {};
+  S.ticks = [];
+  S.priceHistory = [];
+  S.lastPrice = 0;
+  S.currentSignal = null;
+
+  if (old) {
+    try { old.removeAllListeners('close'); } catch {}
+    try { old.close(); } catch {}
+  }
+
+  setTimeout(startBot, 150);
+}
+
+const simulatorControls = {
+  async apply(cmd) {
+    if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) {
+      throw simulatorControlError('Invalid control request.');
+    }
+
+    if (cmd.action === 'start') {
+      S.manualStop = false;
+      S.stopped = false;
+      if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
+      log.info('Simulator started from app');
+      return { running:true };
+    }
+
+    if (cmd.action === 'stop') {
+      S.manualStop = true;
+      S.stopped = true;
+      S.currentSignal = null;
+      log.stop('Simulator stopped from app');
+      return { running:false, inTrade:Boolean(S.inTrade) };
+    }
+
+    if (cmd.action === 'update-config') {
+      if (S.inTrade) throw simulatorControlError('Wait for the current simulated trade to finish before changing settings.');
+
+      const instrument = String(cmd.instrument || '').toUpperCase();
+      const stake = Number(cmd.baseStake);
+      const maxDD = Number(cmd.maxDD);
+      const target = Number(cmd.dailyTarget);
+
+      if (!CONFIG.ALLOWED_INSTRUMENTS.includes(instrument)) throw simulatorControlError('Unsupported instrument.');
+      if (!Number.isFinite(stake) || stake < 0.35 || stake > 1000) throw simulatorControlError('Stake must be between $0.35 and $1000.');
+      if (!Number.isFinite(maxDD) || maxDD < 0.1 || maxDD > 50) throw simulatorControlError('DD limit must be between 0.1% and 50%.');
+      if (!Number.isFinite(target) || target < 0.1 || target > 100) throw simulatorControlError('Target profit must be between 0.1% and 100%.');
+
+      const instrumentChanged = instrument !== CONFIG.INSTRUMENT;
+      CONFIG.INSTRUMENT = instrument;
+      CONFIG.BASE_STAKE = parseFloat(stake.toFixed(2));
+      CONFIG.MAX_DAILY_DD = parseFloat(maxDD.toFixed(1));
+      CONFIG.DAILY_TARGET = parseFloat(target.toFixed(1));
+
+      log.info(
+        'Simulator settings updated: ' +
+        CONFIG.INSTRUMENT + ' | stake $' + CONFIG.BASE_STAKE +
+        ' | DD ' + CONFIG.MAX_DAILY_DD + '% | target +' + CONFIG.DAILY_TARGET + '%'
+      );
+
+      if (instrumentChanged) reconnectSimulatorFeed();
+
+      return {
+        instrument:CONFIG.INSTRUMENT,
+        baseStake:CONFIG.BASE_STAKE,
+        maxDD:CONFIG.MAX_DAILY_DD,
+        dailyTarget:CONFIG.DAILY_TARGET,
+      };
+    }
+
+    throw simulatorControlError('Unsupported simulator action.');
+  },
+};
+
+const server = http.createServer(createSimulatorDashboardHandler({
+  state:S,
+  config:CONFIG,
+  controls:simulatorControls,
+}));
 
 server.listen(CONFIG.PORT, () => {
   log.info('Dashboard running on port '+CONFIG.PORT);
@@ -97,7 +193,7 @@ function scheduleDailyReset(){
     log.info('--- Midnight reset: counters cleared ---');
     S.startBalance=S.balance; S.lowestBalance=S.balance;
     S.dailyPnl=0; S.wins=0; S.losses=0; S.trades=0;
-    S.consecutiveLoss=0; S.stopped=false;
+    S.consecutiveLoss=0; S.stopped=Boolean(S.manualStop);
     S.equityHistory=[S.balance]; S.dailyResets++;
     scheduleDailyReset();
     if(!S.inTrade) subscribeTicks();
@@ -269,8 +365,6 @@ function getStake(){
 }
 
 function placeTrade(signal){
-  // Test-mode safety guard: never simulate or submit a buy order.
-  if (process.env.DASHBOARD_TEST_ONLY === 'true') return;
   const dd=drawdownPct(), pp=pnlPct();
   if(dd>=CONFIG.MAX_DAILY_DD) {log.stop('DD limit hit — paused until midnight');S.stopped=true;return;}
   if(pp>=CONFIG.DAILY_TARGET) {log.win('Daily target hit — paused until midnight');S.stopped=true;return;}
