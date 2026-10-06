@@ -34,6 +34,16 @@ test('original stake and simulator behavior remain present', () => {
   assert.ok(bot.includes("const wP={'Spike Reversal':0.61,'EMA Pullback':0.57,'Stoch RSI':0.55}[signal.strategy]||0.57;"));
 });
 
+test('settlement-aware entry gate requires signal reset before re-entry', () => {
+  assert.ok(bot.includes('const ENTRY_RESET_TICKS = 3;'));
+  assert.ok(bot.includes('const POST_SETTLEMENT_COOLDOWN_MS = 3000;'));
+  assert.ok(bot.includes('if(S.neutralTicks>=ENTRY_RESET_TICKS) S.entryArmed=true;'));
+  assert.ok(bot.includes('if(!S.entryArmed) return;'));
+  assert.ok(bot.includes('if(Date.now()<S.nextEntryAt) return;'));
+  assert.ok(bot.includes('S.entryArmed=false;'));
+  assert.ok(bot.includes('S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;'));
+});
+
 test('original live contract branch remains unchanged but is unreachable in simulator mode', () => {
   assert.ok(bot.includes("contract_type:signal.dir==='up'?'CALL':'PUT'"));
   assert.ok(bot.includes("duration:5,duration_unit:'t',basis:'stake',currency:'USD',"));

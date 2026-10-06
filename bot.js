@@ -58,10 +58,13 @@ const S = {
   recentLogs:[], recentTrades:[],
   lastPrice:0, priceHistory:[], equityHistory:[],
   currentSignal:null, dailyResets:0,
+  entryArmed:true, neutralTicks:0, nextEntryAt:0,
   indicators:{ rsi:50, stochRsi:50, emaSignal:'—', macd:0, squeeze:false, spike:false },
 };
 
 let nextResetIn = 0;
+const ENTRY_RESET_TICKS = 3;
+const POST_SETTLEMENT_COOLDOWN_MS = 3000;
 
 const tsISO = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const ts    = () => new Date().toTimeString().slice(0,8);
@@ -91,6 +94,12 @@ function simulatorControlError(message) {
   return error;
 }
 
+function resetEntryGate() {
+  S.entryArmed = true;
+  S.neutralTicks = 0;
+  S.nextEntryAt = 0;
+}
+
 function reconnectSimulatorFeed() {
   const old = S.ws;
   S.ws = null;
@@ -99,6 +108,7 @@ function reconnectSimulatorFeed() {
   S.priceHistory = [];
   S.lastPrice = 0;
   S.currentSignal = null;
+  resetEntryGate();
 
   if (old) {
     try { old.removeAllListeners('close'); } catch {}
@@ -117,6 +127,7 @@ const simulatorControls = {
     if (cmd.action === 'start') {
       S.manualStop = false;
       S.stopped = false;
+      resetEntryGate();
       if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
       log.info('Simulator started from app');
       return { running:true };
@@ -195,6 +206,7 @@ function scheduleDailyReset(){
     S.dailyPnl=0; S.wins=0; S.losses=0; S.trades=0;
     S.consecutiveLoss=0; S.stopped=Boolean(S.manualStop);
     S.equityHistory=[S.balance]; S.dailyResets++;
+    resetEntryGate();
     scheduleDailyReset();
     if(!S.inTrade) subscribeTicks();
   }, delay);
@@ -325,7 +337,19 @@ function onTick(tick){
   if(S.ticks.length<30) return;
   const signal=analyze(S.ticks);
   S.currentSignal=signal;
-  if(signal) placeTrade(signal);
+
+  if(!signal){
+    S.neutralTicks++;
+    if(S.neutralTicks>=ENTRY_RESET_TICKS) S.entryArmed=true;
+    return;
+  }
+
+  S.neutralTicks=0;
+  if(!S.entryArmed) return;
+  if(Date.now()<S.nextEntryAt) return;
+
+  S.entryArmed=false;
+  placeTrade(signal);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -378,7 +402,7 @@ function placeTrade(signal){
     underlying_symbol:SYMBOL_MAP[CONFIG.INSTRUMENT],
     duration:5,duration_unit:'t',basis:'stake',currency:'USD',
   }},msg=>{
-    if(msg.error){log.warn('Order failed: '+msg.error.message);S.inTrade=false;return;}
+    if(msg.error){log.warn('Order failed: '+msg.error.message);S.inTrade=false;S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;return;}
     log.trade('Order placed | ID: '+msg.buy.contract_id);
     send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
   });
@@ -405,6 +429,7 @@ function recordResult(won,profit,balAfter,signal){
   if(won){S.wins++;S.consecutiveLoss=0;log.win('WIN +$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | WR:'+wr()+'% | #'+S.trades);}
   else{S.losses++;S.consecutiveLoss++;log.loss('LOSS -$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | Streak:'+S.consecutiveLoss);}
   S.inTrade=false; S.currentSignal=null;
+  S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
 }
 
 // ─────────────────────────────────────────────────────────────
