@@ -286,6 +286,8 @@ function validateDemoContractOffering(){
       const available=((msg.contracts_for||{}).available)||[];
       const call=available.find(c=>c.contract_type==='CALL');
       const put=available.find(c=>c.contract_type==='PUT');
+      const contractTypes=[...new Set(available.map(c=>c.contract_type).filter(Boolean))].sort();
+      log.info('Available contract types for '+CONFIG.INSTRUMENT+': '+(contractTypes.join(', ')||'none'));
       if(!call||!put){
         log.stop('CALL/PUT not offered for '+CONFIG.INSTRUMENT+' on this Deriv account.');
         S.stopped=true; S.manualStop=true; resolve(false); return;
