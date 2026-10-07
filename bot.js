@@ -19,6 +19,8 @@ const CONFIG = {
   DERIV_API_TOKEN : process.env.DERIV_DEMO_API_TOKEN,
   DERIV_APP_ID    : process.env.DERIV_APP_ID    || '34p4exLBj1NDTx15WfqnE',
   DEMO_MODE       : process.env.DEMO_MODE !== 'false',
+  DEMO_CONTRACT_EXECUTION : process.env.DEMO_CONTRACT_EXECUTION === 'true',
+  DEMO_CONTRACT_MAX_TRADES: parseInt(process.env.DEMO_CONTRACT_MAX_TRADES || '3'),
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
   BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '0.35'),
   MAX_DAILY_DD    : parseFloat(process.env.MAX_DAILY_DD   || '10'),
@@ -42,7 +44,7 @@ if (process.env.DERIV_API_TOKEN) {
 CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
 const SYMBOL_MAP = {
-  BOOM500:'R_100', BOOM1000:'R_75', CRASH500:'R_50', CRASH1000:'R_25',
+  BOOM500:'BOOM500', BOOM1000:'BOOM1000', CRASH500:'CRASH500', CRASH1000:'CRASH1000',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -59,6 +61,7 @@ const S = {
   lastPrice:0, priceHistory:[], equityHistory:[],
   currentSignal:null, dailyResets:0,
   entryArmed:true, neutralTicks:0, nextEntryAt:0,
+  activeContractId:null, tradeStartBalance:null,
   indicators:{ rsi:50, stochRsi:50, emaSignal:'—', macd:0, squeeze:false, spike:false },
 };
 
@@ -272,10 +275,40 @@ async function getOTP(accountId){
   return wsUrl;
 }
 
+function validateDemoContractOffering(){
+  return new Promise(resolve=>{
+    if(!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }
+    send({contracts_for:SYMBOL_MAP[CONFIG.INSTRUMENT]},msg=>{
+      if(msg.error){
+        log.stop('Contract preflight failed: '+msg.error.message);
+        S.stopped=true; S.manualStop=true; resolve(false); return;
+      }
+      const available=((msg.contracts_for||{}).available)||[];
+      const call=available.find(c=>c.contract_type==='CALL');
+      const put=available.find(c=>c.contract_type==='PUT');
+      if(!call||!put){
+        log.stop('CALL/PUT not offered for '+CONFIG.INSTRUMENT+' on this Deriv account.');
+        S.stopped=true; S.manualStop=true; resolve(false); return;
+      }
+      if((call.sentiment&&call.sentiment!=='up')||(put.sentiment&&put.sentiment!=='down')){
+        log.stop('CALL/PUT direction validation failed for '+CONFIG.INSTRUMENT+'.');
+        S.stopped=true; S.manualStop=true; resolve(false); return;
+      }
+      log.info('Demo contract preflight passed: '+CONFIG.INSTRUMENT+' CALL/PUT available.');
+      resolve(true);
+    });
+  });
+}
+
 function connectWebSocket(wsUrl){
   log.info('Connecting to Deriv...');
   S.ws=new WebSocket(wsUrl);
-  S.ws.on('open',()=>{ log.info('Connected!'); getBalance(); subscribeTicks(); });
+  S.ws.on('open',async()=>{
+    log.info('Connected!');
+    getBalance();
+    const ok=await validateDemoContractOffering();
+    if(ok) subscribeTicks();
+  });
   S.ws.on('message',raw=>{ try{handleMessage(JSON.parse(raw));}catch(e){} });
   S.ws.on('close',()=>{
     if(!S.stopped){
@@ -318,7 +351,7 @@ function getBalance(){
 
 function onBalance(d){
   S.balance=parseFloat(d.balance);
-  if(S.balance<S.lowestBalance) S.lowestBalance=S.balance;
+  if(!S.inTrade&&S.balance<S.lowestBalance) S.lowestBalance=S.balance;
 }
 
 function subscribeTicks(){
@@ -394,23 +427,37 @@ function placeTrade(signal){
   if(pp>=CONFIG.DAILY_TARGET) {log.win('Daily target hit — paused until midnight');S.stopped=true;return;}
   const stake=parseFloat(getStake().toFixed(2));
   if(stake<0.35){log.warn('Stake below minimum. Skipping.');return;}
-  S.inTrade=true; S.currentSignal=signal;
+  S.inTrade=true; S.currentSignal=signal; S.tradeStartBalance=S.balance;
   log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+' | $'+stake+' | DD:'+dd.toFixed(1)+'%');
-  if(CONFIG.DEMO_MODE){simulateTrade(signal,stake);return;}
+  if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){simulateTrade(signal,stake);return;}
   send({buy:1,price:stake,parameters:{
     contract_type:signal.dir==='up'?'CALL':'PUT',
     underlying_symbol:SYMBOL_MAP[CONFIG.INSTRUMENT],
     duration:5,duration_unit:'t',basis:'stake',currency:'USD',
   }},msg=>{
-    if(msg.error){log.warn('Order failed: '+msg.error.message);S.inTrade=false;S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;return;}
+    if(msg.error){
+      log.warn('Order failed: '+msg.error.message);
+      S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+      S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
+      return;
+    }
+    S.activeContractId=msg.buy.contract_id;
     log.trade('Order placed | ID: '+msg.buy.contract_id);
     send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
   });
 }
 
 function onContractUpdate(c){
-  if(!c||c.status==='open') return;
-  recordResult(parseFloat(c.profit)>0,parseFloat(c.profit),parseFloat(c.balance_after),S.currentSignal);
+  if(!c||!S.inTrade||!S.activeContractId) return;
+  if(String(c.contract_id)!==String(S.activeContractId)) return;
+  const closed=Boolean(c.is_sold)||(c.status&&c.status!=='open');
+  if(!closed) return;
+  const profit=parseFloat(c.profit);
+  if(!Number.isFinite(profit)) return;
+  const rawBal=parseFloat(c.balance_after);
+  const balAfter=Number.isFinite(rawBal)?rawBal:null;
+  S.activeContractId=null;
+  recordResult(profit>0,profit,balAfter,S.currentSignal);
 }
 
 function simulateTrade(signal,stake){
@@ -420,7 +467,16 @@ function simulateTrade(signal,stake){
 }
 
 function recordResult(won,profit,balAfter,signal){
-  S.trades++; S.balance=balAfter??parseFloat((S.balance+profit).toFixed(2)); S.dailyPnl+=profit;
+  S.trades++;
+  const synthetic=CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION;
+  if(synthetic){
+    S.balance=balAfter??parseFloat((S.balance+profit).toFixed(2));
+  }else if(Number.isFinite(balAfter)){
+    S.balance=balAfter;
+  }else if(Number.isFinite(S.tradeStartBalance)){
+    S.balance=parseFloat((S.tradeStartBalance+profit).toFixed(2));
+  }
+  S.dailyPnl+=profit;
   if(S.balance<S.lowestBalance) S.lowestBalance=S.balance;
   S.equityHistory.push(S.balance);
   if(S.equityHistory.length>150) S.equityHistory.shift();
@@ -428,8 +484,12 @@ function recordResult(won,profit,balAfter,signal){
   if(S.recentTrades.length>50) S.recentTrades.pop();
   if(won){S.wins++;S.consecutiveLoss=0;log.win('WIN +$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | WR:'+wr()+'% | #'+S.trades);}
   else{S.losses++;S.consecutiveLoss++;log.loss('LOSS -$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | Streak:'+S.consecutiveLoss);}
-  S.inTrade=false; S.currentSignal=null;
+  S.inTrade=false; S.currentSignal=null; S.tradeStartBalance=null;
   S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
+  if(CONFIG.DEMO_CONTRACT_EXECUTION&&CONFIG.DEMO_CONTRACT_MAX_TRADES>0&&S.trades>=CONFIG.DEMO_CONTRACT_MAX_TRADES){
+    S.stopped=true; S.manualStop=true;
+    log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
