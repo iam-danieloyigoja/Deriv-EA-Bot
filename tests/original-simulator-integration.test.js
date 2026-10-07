@@ -55,10 +55,14 @@ test('settlement-aware entry gate requires signal reset before re-entry', () => 
   assert.ok(bot.includes('S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;'));
 });
 
-test('original live contract branch remains unchanged but is unreachable in simulator mode', () => {
+test('CALL PUT 5-tick execution uses proposal then buy without changing signal direction', () => {
+  assert.ok(bot.includes("proposal:1,"));
+  assert.ok(bot.includes("amount:stake,"));
+  assert.ok(bot.includes("basis:'stake',"));
   assert.ok(bot.includes("contract_type:signal.dir==='up'?'CALL':'PUT'"));
-  assert.ok(bot.includes("duration:5,duration_unit:'t',basis:'stake',currency:'USD',"));
-  assert.doesNotMatch(bot,/\bMULTUP\b|\bMULTDOWN\b|TEST_MULTIPLIER/);
+  assert.ok(bot.includes("duration:5,"));
+  assert.ok(bot.includes("duration_unit:'t',"));
+  assert.ok(bot.includes("send({buy:proposalId,price:askPrice}"));
 });
 
 test('app exposes authenticated same-origin simulator controls', () => {

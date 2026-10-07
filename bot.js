@@ -432,20 +432,43 @@ function placeTrade(signal){
   S.inTrade=true; S.currentSignal=signal; S.tradeStartBalance=S.balance;
   log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+' | $'+stake+' | DD:'+dd.toFixed(1)+'%');
   if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){simulateTrade(signal,stake);return;}
-  send({buy:1,price:stake,parameters:{
+  send({
+    proposal:1,
+    amount:stake,
+    basis:'stake',
     contract_type:signal.dir==='up'?'CALL':'PUT',
     underlying_symbol:SYMBOL_MAP[CONFIG.INSTRUMENT],
-    duration:5,duration_unit:'t',basis:'stake',currency:'USD',
-  }},msg=>{
-    if(msg.error){
-      log.warn('Order failed: '+msg.error.message);
+    duration:5,
+    duration_unit:'t',
+    currency:'USD',
+  },proposalMsg=>{
+    if(proposalMsg.error){
+      log.warn('Proposal failed: '+proposalMsg.error.message);
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
       S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
       return;
     }
-    S.activeContractId=msg.buy.contract_id;
-    log.trade('Order placed | ID: '+msg.buy.contract_id);
-    send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
+    const proposal=proposalMsg.proposal||{};
+    const proposalId=proposal.id;
+    const askPrice=parseFloat(proposal.ask_price);
+    if(!proposalId||!Number.isFinite(askPrice)){
+      log.warn('Proposal failed: missing proposal ID or ask price.');
+      S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+      S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
+      return;
+    }
+    log.trade('Proposal accepted | ID: '+proposalId+' | Price:$'+askPrice.toFixed(2));
+    send({buy:proposalId,price:askPrice},msg=>{
+      if(msg.error){
+        log.warn('Order failed: '+msg.error.message);
+        S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+        S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
+        return;
+      }
+      S.activeContractId=msg.buy.contract_id;
+      log.trade('Order placed | ID: '+msg.buy.contract_id);
+      send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
+    });
   });
 }
 
