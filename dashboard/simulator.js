@@ -91,7 +91,7 @@ function fillSettings(data) {
 }
 
 function renderControls(data) {
-  const enabled = data.controlsEnabled === true && data.simulatorMode === true;
+  const enabled = data.controlsEnabled === true;
   const settingsLocked = data.inTrade === true;
   ['instrument-input','stake-input','dd-input','target-input','reset-settings','apply-settings'].forEach(id => {
     element(id).disabled = !enabled || controlBusy || settingsLocked;
@@ -100,16 +100,16 @@ function renderControls(data) {
   const toggle = element('toggle-monitor');
   toggle.disabled = !enabled || controlBusy;
 
-  text('control-mode-label', enabled ? 'SIMULATOR' : 'LOCKED');
+  text('control-mode-label', enabled ? (data.tradeMode || 'BOT') : 'LOCKED');
 
   if (settingsLocked) {
-    text('control-hint','A simulated trade is completing. Start/stop remains available; settings unlock after the result is recorded.');
+    text('control-hint','A trade is completing. Start/stop remains available; settings unlock after settlement.');
   } else {
     text('control-hint',
-      `Original strategy + original simulator. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}.`);
+      `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}.`);
   }
 
-  toggle.textContent = data.running ? 'STOP SIMULATOR' : 'START SIMULATOR';
+  toggle.textContent = data.running ? 'STOP BOT' : 'START BOT';
 }
 
 function render(data) {
@@ -123,17 +123,15 @@ function render(data) {
 
   let statusText = ' DISCONNECTED';
   if (data.connected) {
-    if (data.inTrade) statusText = ' SIMULATING TRADE';
-    else if (data.running) statusText = ' SIMULATOR RUNNING';
-    else statusText = ' SIMULATOR PAUSED';
+    if (data.inTrade) statusText = ' TRADE IN PROGRESS';
+    else if (data.running) statusText = ` ${(data.tradeMode || 'BOT')} RUNNING`;
+    else statusText = ` ${(data.tradeMode || 'BOT')} PAUSED`;
   }
   status.append(document.createTextNode(statusText));
 
-  text('account-mode',data.accountType || 'ORIGINAL BOT · SIMULATOR');
-  text('mode-summary',data.simulatorMode
-    ? 'The app controls the original bot in simulation mode.'
-    : 'Simulator safety gate is not enabled.');
-  text('feed-note','No real Deriv buy orders are sent.');
+  text('account-mode',data.accountType || 'ORIGINAL BOT');
+  text('mode-summary',data.modeSummary || 'Bot telemetry connected.');
+  text('feed-note',data.feedNote || '');
 
   text('balance',money(data.balance));
   text('pnl',signedMoney(data.dailyPnl));
@@ -157,19 +155,19 @@ function render(data) {
   setBar('squeeze',ind.squeeze === true ? 95 : ind.squeeze === false ? 25 : null, ind.squeeze === null ? '—' : ind.squeeze ? 'Yes' : 'No');
   setBar('spike',ind.spike === true ? 95 : ind.spike === false ? 20 : null, ind.spike === null ? '—' : ind.spike ? 'Detected' : 'None');
 
-  let active = 'Simulator paused';
-  if (data.inTrade) active = data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()} · SIMULATING` : 'Simulated trade in progress';
+  let active = 'Bot paused';
+  if (data.inTrade) active = data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()} · IN TRADE` : 'Trade in progress';
   else if (data.running) active = data.currentSignal ? `${data.currentSignal.strategy} · ${data.currentSignal.dir.toUpperCase()}` : 'Scanning with original strategy';
   text('active-signal',active);
 
-  text('trade-source',data.tradeSource || 'ORIGINAL BOT SIMULATOR');
+  text('trade-source',data.tradeSource || 'DERIV EXECUTION');
   const list = element('trade-list');
   list.replaceChildren();
 
   if (!Array.isArray(data.recentTrades) || !data.recentTrades.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-trades';
-    empty.textContent = 'No simulated trades yet.';
+    empty.textContent = 'No trades yet.';
     list.append(empty);
   } else {
     for (const trade of data.recentTrades) {

@@ -15,12 +15,16 @@ const { createSimulatorDashboardHandler } = require('./dashboard/simulator-serve
 // ─────────────────────────────────────────────────────────────
 //  CONFIG — all values come from Railway → Variables tab
 // ─────────────────────────────────────────────────────────────
+const DEMO_MODE = process.env.DEMO_MODE !== 'false';
 const CONFIG = {
-  DERIV_API_TOKEN : process.env.DERIV_DEMO_API_TOKEN,
+  DERIV_API_TOKEN : DEMO_MODE ? process.env.DERIV_DEMO_API_TOKEN : process.env.DERIV_API_TOKEN,
   DERIV_APP_ID    : process.env.DERIV_APP_ID    || '34p4exLBj1NDTx15WfqnE',
-  DEMO_MODE       : process.env.DEMO_MODE !== 'false',
-  DEMO_CONTRACT_EXECUTION : process.env.DEMO_CONTRACT_EXECUTION === 'true',
+  DEMO_MODE,
+  DEMO_CONTRACT_EXECUTION : DEMO_MODE && process.env.DEMO_CONTRACT_EXECUTION === 'true',
   DEMO_CONTRACT_MAX_TRADES: parseInt(process.env.DEMO_CONTRACT_MAX_TRADES || '3'),
+  LIVE_TRADING_ENABLED     : process.env.LIVE_TRADING_ENABLED === 'true',
+  LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '3'),
+  DERIV_REAL_ACCOUNT_ID    : (process.env.DERIV_REAL_ACCOUNT_ID || '').trim(),
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
   BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '0.35'),
   MAX_DAILY_DD    : parseFloat(process.env.MAX_DAILY_DD   || '10'),
@@ -31,15 +35,23 @@ const CONFIG = {
   PORT            : parseInt(process.env.PORT             || '8080'),
 };
 
-if (
-  process.env.SIMULATOR_ONLY !== 'true' ||
-  process.env.DASHBOARD_TEST_ONLY !== 'true' ||
-  CONFIG.DEMO_MODE !== true
-) {
-  throw new Error('Simulator integration requires SIMULATOR_ONLY=true, DASHBOARD_TEST_ONLY=true and DEMO_MODE=true.');
-}
-if (process.env.DERIV_API_TOKEN) {
-  throw new Error('DERIV_API_TOKEN must not exist on the isolated simulator service.');
+if (CONFIG.DEMO_MODE) {
+  if (process.env.SIMULATOR_ONLY !== 'true' || process.env.DASHBOARD_TEST_ONLY !== 'true') {
+    throw new Error('Demo staging requires SIMULATOR_ONLY=true and DASHBOARD_TEST_ONLY=true.');
+  }
+  if (!CONFIG.DERIV_API_TOKEN) {
+    throw new Error('DERIV_DEMO_API_TOKEN is required in demo mode.');
+  }
+} else {
+  if (!CONFIG.LIVE_TRADING_ENABLED) {
+    throw new Error('Live mode is locked. Set LIVE_TRADING_ENABLED=true only after explicit approval.');
+  }
+  if (process.env.SIMULATOR_ONLY === 'true' || process.env.DASHBOARD_TEST_ONLY === 'true') {
+    throw new Error('Live mode refuses simulator-only safety flags.');
+  }
+  if (!CONFIG.DERIV_API_TOKEN) {
+    throw new Error('DERIV_API_TOKEN is required in live mode.');
+  }
 }
 CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
@@ -132,7 +144,7 @@ const simulatorControls = {
       S.stopped = false;
       resetEntryGate();
       if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
-      log.info('Simulator started from app');
+      log.info('Bot started from app');
       return { running:true };
     }
 
@@ -140,12 +152,12 @@ const simulatorControls = {
       S.manualStop = true;
       S.stopped = true;
       S.currentSignal = null;
-      log.stop('Simulator stopped from app');
+      log.stop('Bot stopped from app');
       return { running:false, inTrade:Boolean(S.inTrade) };
     }
 
     if (cmd.action === 'update-config') {
-      if (S.inTrade) throw simulatorControlError('Wait for the current simulated trade to finish before changing settings.');
+      if (S.inTrade) throw simulatorControlError('Wait for the current trade to finish before changing settings.');
 
       const instrument = String(cmd.instrument || '').toUpperCase();
       const stake = Number(cmd.baseStake);
@@ -164,7 +176,7 @@ const simulatorControls = {
       CONFIG.DAILY_TARGET = parseFloat(target.toFixed(1));
 
       log.info(
-        'Simulator settings updated: ' +
+        'Bot settings updated: ' +
         CONFIG.INSTRUMENT + ' | stake $' + CONFIG.BASE_STAKE +
         ' | DD ' + CONFIG.MAX_DAILY_DD + '% | target +' + CONFIG.DAILY_TARGET + '%'
       );
@@ -179,7 +191,7 @@ const simulatorControls = {
       };
     }
 
-    throw simulatorControlError('Unsupported simulator action.');
+    throw simulatorControlError('Unsupported bot action.');
   },
 };
 
@@ -254,14 +266,25 @@ async function getAccountId(){
   log.info('Fetching account list...');
   const res=await restCall('GET','/trading/v1/options/accounts');
   const list=Array.isArray(res.data||res)?(res.data||res):[res.data||res];
-  const account=CONFIG.DEMO_MODE
-    ? list.find(a=>a.account_type==='demo'||a.is_virtual||a.type==='demo')||list[0]
-    : list.find(a=>a.account_type==='real'||(!a.is_virtual&&a.type!=='demo'))||list[0];
-  if (process.env.DASHBOARD_TEST_ONLY === 'true' &&
-      (!account || !(account.account_type==='demo' || account.is_virtual || account.type==='demo'))) {
-    throw new Error('A Deriv demo account was not found. Monitor-only connection refused.');
+  const accountIdOf=a=>String((a&&(a.account_id||a.id||a.loginid))||'');
+  let account;
+  if(CONFIG.DEMO_MODE){
+    account=list.find(a=>a.account_type==='demo'||a.is_virtual||a.type==='demo');
+    if(!account) throw new Error('A Deriv demo account was not found.');
+  }else{
+    const realAccounts=list.filter(a=>a.account_type==='real'||(!a.is_virtual&&a.type!=='demo'));
+    if(CONFIG.DERIV_REAL_ACCOUNT_ID){
+      account=realAccounts.find(a=>accountIdOf(a)===CONFIG.DERIV_REAL_ACCOUNT_ID);
+      if(!account) throw new Error('DERIV_REAL_ACCOUNT_ID was not found in the authorized real accounts.');
+    }else if(realAccounts.length===1){
+      account=realAccounts[0];
+    }else if(realAccounts.length===0){
+      throw new Error('A Deriv real account was not found.');
+    }else{
+      throw new Error('Multiple real accounts found. Set DERIV_REAL_ACCOUNT_ID before live trading.');
+    }
   }
-  const id=account.account_id||account.id||account.loginid;
+  const id=accountIdOf(account);
   log.info('Account: '+id+' ['+(CONFIG.DEMO_MODE?'DEMO':'LIVE')+']');
   return id;
 }
@@ -275,9 +298,9 @@ async function getOTP(accountId){
   return wsUrl;
 }
 
-function validateDemoContractOffering(){
+function validateContractOffering(){
   return new Promise(resolve=>{
-    if(!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }
+    if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }
     send({contracts_for:SYMBOL_MAP[CONFIG.INSTRUMENT]},msg=>{
       if(msg.error){
         log.stop('Contract preflight failed: '+msg.error.message);
@@ -296,7 +319,7 @@ function validateDemoContractOffering(){
         log.stop('CALL/PUT direction validation failed for '+CONFIG.INSTRUMENT+'.');
         S.stopped=true; S.manualStop=true; resolve(false); return;
       }
-      log.info('Demo contract preflight passed: '+CONFIG.INSTRUMENT+' CALL/PUT available.');
+      log.info('Contract preflight passed: '+CONFIG.INSTRUMENT+' CALL/PUT available.');
       resolve(true);
     });
   });
@@ -308,7 +331,7 @@ function connectWebSocket(wsUrl){
   S.ws.on('open',async()=>{
     log.info('Connected!');
     getBalance();
-    const ok=await validateDemoContractOffering();
+    const ok=await validateContractOffering();
     if(ok) subscribeTicks();
   });
   S.ws.on('message',raw=>{ try{handleMessage(JSON.parse(raw));}catch(e){} });
@@ -515,6 +538,10 @@ function recordResult(won,profit,balAfter,signal){
     S.stopped=true; S.manualStop=true;
     log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');
   }
+  if(!CONFIG.DEMO_MODE&&CONFIG.LIVE_MAX_TRADES>0&&S.trades>=CONFIG.LIVE_MAX_TRADES){
+    S.stopped=true; S.manualStop=true;
+    log.stop('Live acceptance limit reached: '+S.trades+' trades. Paused.');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -538,7 +565,7 @@ process.on('SIGTERM',()=>process.exit(0));
 //  START
 // ─────────────────────────────────────────────────────────────
 async function startBot(){
-  if(!CONFIG.DERIV_API_TOKEN){ log.stop('DERIV_API_TOKEN not set in Railway Variables!'); return; }
+  if(!CONFIG.DERIV_API_TOKEN){ log.stop((CONFIG.DEMO_MODE?'DERIV_DEMO_API_TOKEN':'DERIV_API_TOKEN')+' not set in Railway Variables!'); return; }
   if(!CONFIG.DERIV_APP_ID)   { log.stop('DERIV_APP_ID not set in Railway Variables!');    return; }
   try{
     const id=await getAccountId();
@@ -548,7 +575,7 @@ async function startBot(){
   }catch(e){
     log.stop('Startup error: '+e.message);
     if(e.message.includes('401')||e.message.includes('403')){
-      log.stop('Token rejected — check DERIV_API_TOKEN and DERIV_APP_ID in Railway Variables');
+      log.stop('Token rejected - check the active Deriv token and DERIV_APP_ID in Railway Variables');
       return;
     }
     log.warn('Retrying in 15s...');
@@ -563,4 +590,4 @@ console.log(chalk.cyan( '  Index : '+CONFIG.INSTRUMENT+' | Stake: $'+CONFIG.BASE
 console.log(chalk.cyan( '  Target: +'+CONFIG.DAILY_TARGET+'% | Max DD: '+CONFIG.MAX_DAILY_DD+'%'));
 console.log(chalk.cyan( '  Port  : '+CONFIG.PORT+'\n'));
 
-startBot(); // Market monitoring only: all order paths are blocked by the test-mode guard.
+startBot(); // Starts connected but paused; trading begins only after authenticated dashboard Start.

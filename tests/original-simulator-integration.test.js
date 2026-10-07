@@ -8,12 +8,17 @@ const path = require('node:path');
 const bot = fs.readFileSync(path.join(__dirname,'../bot.js'),'utf8');
 const server = fs.readFileSync(path.join(__dirname,'../dashboard/simulator-server.js'),'utf8');
 
-test('simulator is hard-gated to isolated demo mode and demo token', () => {
-  assert.match(bot,/SIMULATOR_ONLY/);
-  assert.match(bot,/DASHBOARD_TEST_ONLY/);
-  assert.match(bot,/CONFIG\.DEMO_MODE !== true/);
-  assert.match(bot,/process\.env\.DERIV_DEMO_API_TOKEN/);
-  assert.match(bot,/DERIV_API_TOKEN must not exist/);
+test('demo and live credentials are separated with explicit live gate', () => {
+  assert.ok(bot.includes("DEMO_MODE ? process.env.DERIV_DEMO_API_TOKEN : process.env.DERIV_API_TOKEN"));
+  assert.ok(bot.includes("LIVE_TRADING_ENABLED     : process.env.LIVE_TRADING_ENABLED === 'true'"));
+  assert.ok(bot.includes("Live mode is locked. Set LIVE_TRADING_ENABLED=true only after explicit approval."));
+  assert.ok(bot.includes("DERIV_API_TOKEN is required in live mode."));
+  assert.doesNotMatch(bot,/pat_[A-Za-z0-9]{20,}/);
+});
+
+test('live account selection refuses ambiguous real accounts', () => {
+  assert.ok(bot.includes("DERIV_REAL_ACCOUNT_ID"));
+  assert.ok(bot.includes("Multiple real accounts found. Set DERIV_REAL_ACCOUNT_ID before live trading."));
 });
 
 test('original signal rules remain present', () => {
@@ -28,34 +33,24 @@ test('original signal rules remain present', () => {
   anchors.forEach(anchor => assert.ok(bot.includes(anchor),anchor));
 });
 
-test('original stake and simulator behavior remain present', () => {
+test('original martingale rule remains unchanged', () => {
   assert.ok(bot.includes("if(!CONFIG.MARTINGALE||S.consecutiveLoss<2) return CONFIG.BASE_STAKE;"));
-  assert.ok(bot.includes("if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){simulateTrade(signal,stake);return;}"));
-  assert.ok(bot.includes("const wP={'Spike Reversal':0.61,'EMA Pullback':0.57,'Stoch RSI':0.55}[signal.strategy]||0.57;"));
+  assert.ok(bot.includes("return Math.min(CONFIG.BASE_STAKE*Math.pow(CONFIG.MARTI_MULT,lv),S.balance*0.05);"));
 });
 
-test('actual demo contract execution is isolated and preserves original underlying map', () => {
-  assert.ok(bot.includes("DEMO_CONTRACT_EXECUTION : process.env.DEMO_CONTRACT_EXECUTION === 'true'"));
-  assert.ok(bot.includes("BOOM500:'R_100'"));
-  assert.ok(bot.includes("BOOM1000:'R_75'"));
-  assert.ok(bot.includes("CRASH500:'R_50'"));
-  assert.ok(bot.includes("CRASH1000:'R_25'"));
-  assert.ok(bot.includes("contracts_for:SYMBOL_MAP[CONFIG.INSTRUMENT]"));
-  assert.ok(bot.includes("CALL/PUT not offered for "));
-  assert.ok(bot.includes("Demo contract acceptance limit reached: "));
-});
-
-test('settlement-aware entry gate requires signal reset before re-entry', () => {
+test('settlement-aware entry gate remains active', () => {
   assert.ok(bot.includes('const ENTRY_RESET_TICKS = 3;'));
   assert.ok(bot.includes('const POST_SETTLEMENT_COOLDOWN_MS = 3000;'));
   assert.ok(bot.includes('if(S.neutralTicks>=ENTRY_RESET_TICKS) S.entryArmed=true;'));
   assert.ok(bot.includes('if(!S.entryArmed) return;'));
   assert.ok(bot.includes('if(Date.now()<S.nextEntryAt) return;'));
-  assert.ok(bot.includes('S.entryArmed=false;'));
-  assert.ok(bot.includes('S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;'));
 });
 
-test('CALL PUT 5-tick execution uses proposal then buy without changing signal direction', () => {
+test('CALL PUT 5-tick proposal-buy execution and original map remain', () => {
+  assert.ok(bot.includes("BOOM500:'R_100'"));
+  assert.ok(bot.includes("BOOM1000:'R_75'"));
+  assert.ok(bot.includes("CRASH500:'R_50'"));
+  assert.ok(bot.includes("CRASH1000:'R_25'"));
   assert.ok(bot.includes("proposal:1,"));
   assert.ok(bot.includes("amount:stake,"));
   assert.ok(bot.includes("basis:'stake',"));
@@ -65,10 +60,20 @@ test('CALL PUT 5-tick execution uses proposal then buy without changing signal d
   assert.ok(bot.includes("send({buy:proposalId,price:askPrice}"));
 });
 
-test('app exposes authenticated same-origin simulator controls', () => {
+test('real-contract preflight applies to demo-contract and live modes', () => {
+  assert.ok(bot.includes("function validateContractOffering()"));
+  assert.ok(bot.includes("if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }"));
+  assert.ok(bot.includes("CALL/PUT not offered for "));
+});
+
+test('initial live acceptance run auto-pauses', () => {
+  assert.ok(bot.includes("LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '3')"));
+  assert.ok(bot.includes("if(!CONFIG.DEMO_MODE&&CONFIG.LIVE_MAX_TRADES>0&&S.trades>=CONFIG.LIVE_MAX_TRADES)"));
+});
+
+test('authenticated dashboard controls support explicit live mode', () => {
   assert.match(server,/sameOrigin\(req\)/);
   assert.match(server,/isAuthenticated\(req\)/);
-  assert.match(server,/SIMULATOR_ONLY === 'true'/);
+  assert.match(server,/config\.LIVE_TRADING_ENABLED === true/);
   assert.match(server,/\/api\/dashboard\/control/);
-  assert.match(server,/createSimulatorDashboardHandler/);
 });

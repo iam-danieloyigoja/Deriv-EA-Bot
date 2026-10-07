@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#081529">
-  <meta name="description" content="DERIV EA BOT strategy simulator">
-  <title>DERIV EA BOT — Strategy Simulator</title>
+  <meta name="description" content="DERIV EA BOT trading dashboard">
+  <title>DERIV EA BOT - Trading Dashboard</title>
   <link rel="stylesheet" href="/dashboard.css">
   <script src="/dashboard.js" defer></script>
 </head>
@@ -13,19 +13,19 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="logo-mark" aria-hidden="true">◈</span><span><strong>DERIV <em>EA BOT</em></strong><small>AUTOMATED TRADING SYSTEM</small></span></div>
-      <div class="header-right"><span class="readonly-tag">SIMULATOR</span><span class="status-pill" id="connection"><i class="status-dot"></i> CONNECTING</span><button type="button" class="small-button" id="logout">SIGN OUT</button></div>
+      <div class="header-right"><span class="readonly-tag">BOT</span><span class="status-pill" id="connection"><i class="status-dot"></i> CONNECTING</span><button type="button" class="small-button" id="logout">SIGN OUT</button></div>
     </header>
 
     <div class="banner final-demo-banner" role="status">
       <span class="banner-icon">ⓘ</span>
-      <span><strong id="mode-title">Original strategy simulator:</strong> <span id="mode-summary">Waiting for bot telemetry…</span> <span id="feed-note">No real Deriv buy orders are sent.</span></span>
+      <span><strong id="mode-title">Bot mode:</strong> <span id="mode-summary">Waiting for bot telemetry…</span> <span id="feed-note">Waiting for execution mode...</span></span>
     </div>
 
     <main class="dashboard-grid">
       <section class="overview" aria-labelledby="overview-title">
-        <div class="section-header"><h2 id="overview-title">SIMULATOR OVERVIEW</h2><span id="account-mode" class="muted-label">CONNECTING</span></div>
+        <div class="section-header"><h2 id="overview-title">TRADING OVERVIEW</h2><span id="account-mode" class="muted-label">CONNECTING</span></div>
         <div class="metrics">
-          <div class="metric primary"><span>SIM BALANCE</span><strong id="balance">—</strong></div>
+          <div class="metric primary"><span>BALANCE</span><strong id="balance">—</strong></div>
           <div class="metric"><span>SESSION P&amp;L</span><strong id="pnl">—</strong></div>
           <div class="metric"><span>DRAWDOWN</span><strong id="drawdown">—</strong></div>
           <div class="metric"><span>TRADES</span><strong id="trades">0</strong></div>
@@ -35,7 +35,7 @@
       </section>
 
       <section class="panel configuration" aria-labelledby="settings-title">
-        <div class="section-header"><h2 id="settings-title">BOT CONTROLS</h2><span class="muted-label" id="control-mode-label">SIMULATOR</span></div>
+        <div class="section-header"><h2 id="settings-title">BOT CONTROLS</h2><span class="muted-label" id="control-mode-label">BOT</span></div>
         <div class="settings-grid">
           <label class="setting"><span>INSTRUMENT</span><select id="instrument-input" disabled></select></label>
           <label class="setting"><span>BASE STAKE ($)</span><input id="stake-input" type="number" min="0.35" max="1000" step="0.01" disabled></label>
@@ -46,8 +46,8 @@
           <button disabled type="button" class="secondary-button" id="reset-settings">RESET FORM</button>
           <button disabled type="button" class="secondary-button" id="apply-settings">APPLY SETTINGS</button>
         </div>
-        <button disabled type="button" class="primary-button full-control" id="toggle-monitor">START SIMULATOR</button>
-        <p class="hint" id="control-hint">The original bot strategy and original simulator remain intact. This app only controls start/stop and configuration.</p>
+        <button disabled type="button" class="primary-button full-control" id="toggle-monitor">START BOT</button>
+        <p class="hint" id="control-hint">The original bot strategy remains intact. This authenticated dashboard controls start/stop and configuration.</p>
         <p class="control-message" id="control-message" aria-live="polite"></p>
       </section>
 
@@ -67,17 +67,17 @@
           <div class="signal-row"><span>BB squeeze</span><div class="bar"><i id="squeeze-bar"></i></div><strong id="squeeze">—</strong></div>
           <div class="signal-row"><span>Spike</span><div class="bar"><i id="spike-bar"></i></div><strong id="spike">—</strong></div>
         </div>
-        <div class="active-signal"><span>ACTIVE SIGNAL</span><strong id="active-signal">Simulator paused</strong></div>
+        <div class="active-signal"><span>ACTIVE SIGNAL</span><strong id="active-signal">Bot paused</strong></div>
       </section>
 
       <section class="panel trades-panel" aria-labelledby="recent-title">
-        <div class="section-header"><h2 id="recent-title">SIMULATED TRADES</h2><span class="muted-label" id="trade-source">ORIGINAL BOT SIMULATOR</span></div>
+        <div class="section-header"><h2 id="recent-title">RECENT TRADES</h2><span class="muted-label" id="trade-source">DERIV EXECUTION</span></div>
         <div class="trade-heading"><span>STRATEGY</span><span>SIDE</span><span>STAKE</span><span>RESULT</span></div>
-        <div id="trade-list" class="trade-list"><div class="empty-trades">No simulated trades yet.</div></div>
+        <div id="trade-list" class="trade-list"><div class="empty-trades">No trades yet.</div></div>
       </section>
     </main>
 
-    <footer class="app-footer"><span>◇</span> Simulator mode: original bot signals and simulator, no real Deriv buy orders. <span id="updated">No update received</span></footer>
+    <footer class="app-footer"><span>◇</span> Authenticated DERIV EA BOT control dashboard. <span id="updated">No update received</span></footer>
   </div>
 </body>
 </html>

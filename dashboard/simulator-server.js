@@ -96,9 +96,18 @@ function safeHistory(list, max) {
 
 function snapshot(state, config) {
   const simulatorMode =
-    process.env.SIMULATOR_ONLY === 'true' &&
-    process.env.DASHBOARD_TEST_ONLY === 'true' &&
-    config.DEMO_MODE === true;
+    config.DEMO_MODE === true &&
+    config.DEMO_CONTRACT_EXECUTION !== true;
+  const demoContractMode =
+    config.DEMO_MODE === true &&
+    config.DEMO_CONTRACT_EXECUTION === true;
+  const liveMode =
+    config.DEMO_MODE === false &&
+    config.LIVE_TRADING_ENABLED === true;
+  const controlsEnabled = config.DEMO_MODE === true
+    ? process.env.SIMULATOR_ONLY === 'true' && process.env.DASHBOARD_TEST_ONLY === 'true'
+    : liveMode;
+  const tradeMode = liveMode ? 'LIVE' : demoContractMode ? 'DEMO CONTRACTS' : 'SIMULATOR';
 
   const connected = Boolean(state.ws && state.ws.readyState === 1);
   const instruments = Array.isArray(config.ALLOWED_INSTRUMENTS)
@@ -108,15 +117,24 @@ function snapshot(state, config) {
   return {
     observedAt: new Date().toISOString(),
     simulatorMode,
-    controlsEnabled: simulatorMode,
+    demoContractMode,
+    liveMode,
+    tradeMode,
+    controlsEnabled,
     connected,
     running: Boolean(connected && !state.stopped),
     stopped: Boolean(state.stopped),
     manualStop: Boolean(state.manualStop),
     inTrade: Boolean(state.inTrade),
-    accountType: 'ORIGINAL BOT · SIMULATOR',
-    balanceSource: 'DERIV DEMO START BALANCE + SIMULATED P&L',
-    tradeSource: 'ORIGINAL BOT SIMULATOR',
+    accountType: 'ORIGINAL BOT - '+tradeMode,
+    balanceSource: simulatorMode ? 'DERIV DEMO START BALANCE + SIMULATED P&L' : 'DERIV ACCOUNT BALANCE',
+    tradeSource: simulatorMode ? 'ORIGINAL BOT SIMULATOR' : 'DERIV CALL/PUT 5-TICK CONTRACTS',
+    modeSummary: liveMode
+      ? 'Live account connected. Trading starts only from the authenticated dashboard.'
+      : demoContractMode
+        ? 'Deriv demo account with real demo CALL/PUT contracts.'
+        : 'Original strategy simulator.',
+    feedNote: simulatorMode ? 'No Deriv buy orders are sent.' : 'Contract execution uses Deriv proposal -> buy -> settlement.',
     instrument: typeof config.INSTRUMENT === 'string' ? config.INSTRUMENT : null,
     allowedInstruments: instruments,
     balance: safeNumber(state.balance),
@@ -185,7 +203,7 @@ function createSimulatorDashboardHandler({state, config, controls}) {
     const isGet = req.method === 'GET';
     const isPost = req.method === 'POST';
 
-    if (pathname === '/health' && isGet) return sendJson(res, 200, {ok:true, mode:'simulator'});
+    if (pathname === '/health' && isGet) return sendJson(res, 200, {ok:true, mode:config.DEMO_MODE ? (config.DEMO_CONTRACT_EXECUTION ? 'demo-contracts' : 'simulator') : 'live'});
 
     if (pathname === '/api/control' || pathname === '/api/state') {
       return sendJson(res, 410, {error:'Legacy API disabled'});
@@ -256,12 +274,11 @@ function createSimulatorDashboardHandler({state, config, controls}) {
       if (!sameOrigin(req)) return sendJson(res, 403, {error:'Origin rejected'});
       if (!isAuthenticated(req)) return sendJson(res, 401, {error:'Sign in required'});
 
-      const enabled =
-        process.env.SIMULATOR_ONLY === 'true' &&
-        process.env.DASHBOARD_TEST_ONLY === 'true' &&
-        config.DEMO_MODE === true;
+      const enabled = config.DEMO_MODE === true
+        ? process.env.SIMULATOR_ONLY === 'true' && process.env.DASHBOARD_TEST_ONLY === 'true'
+        : config.LIVE_TRADING_ENABLED === true;
 
-      if (!enabled) return sendJson(res, 423, {error:'Simulator controls are locked'});
+      if (!enabled) return sendJson(res, 423, {error:'Bot controls are locked'});
 
       return readJsonBody(req, res, async body => {
         try {
