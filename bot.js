@@ -44,7 +44,7 @@ if (process.env.DERIV_API_TOKEN) {
 CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
 const SYMBOL_MAP = {
-  BOOM500:'BOOM500', BOOM1000:'BOOM1000', CRASH500:'CRASH500', CRASH1000:'CRASH1000',
+  BOOM500:'R_100', BOOM1000:'R_75', CRASH500:'R_50', CRASH1000:'R_25',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ function validateDemoContractOffering(){
       const call=available.find(c=>c.contract_type==='CALL');
       const put=available.find(c=>c.contract_type==='PUT');
       const contractTypes=[...new Set(available.map(c=>c.contract_type).filter(Boolean))].sort();
-      log.info('Available contract types for '+CONFIG.INSTRUMENT+': '+(contractTypes.join(', ')||'none'));
+      log.info('Available contract types for '+CONFIG.INSTRUMENT+' ['+SYMBOL_MAP[CONFIG.INSTRUMENT]+']: '+(contractTypes.join(', ')||'none'));
       if(!call||!put){
         log.stop('CALL/PUT not offered for '+CONFIG.INSTRUMENT+' on this Deriv account.');
         S.stopped=true; S.manualStop=true; resolve(false); return;

@@ -34,12 +34,12 @@ test('original stake and simulator behavior remain present', () => {
   assert.ok(bot.includes("const wP={'Spike Reversal':0.61,'EMA Pullback':0.57,'Stoch RSI':0.55}[signal.strategy]||0.57;"));
 });
 
-test('actual demo contract execution is isolated and uses Boom Crash symbols', () => {
+test('actual demo contract execution is isolated and preserves original underlying map', () => {
   assert.ok(bot.includes("DEMO_CONTRACT_EXECUTION : process.env.DEMO_CONTRACT_EXECUTION === 'true'"));
-  assert.ok(bot.includes("BOOM500:'BOOM500'"));
-  assert.ok(bot.includes("BOOM1000:'BOOM1000'"));
-  assert.ok(bot.includes("CRASH500:'CRASH500'"));
-  assert.ok(bot.includes("CRASH1000:'CRASH1000'"));
+  assert.ok(bot.includes("BOOM500:'R_100'"));
+  assert.ok(bot.includes("BOOM1000:'R_75'"));
+  assert.ok(bot.includes("CRASH500:'R_50'"));
+  assert.ok(bot.includes("CRASH1000:'R_25'"));
   assert.ok(bot.includes("contracts_for:SYMBOL_MAP[CONFIG.INSTRUMENT]"));
   assert.ok(bot.includes("CALL/PUT not offered for "));
   assert.ok(bot.includes("Demo contract acceptance limit reached: "));
