@@ -38,6 +38,17 @@ test('original martingale rule remains unchanged', () => {
   assert.ok(bot.includes("return Math.min(CONFIG.BASE_STAKE*Math.pow(CONFIG.MARTI_MULT,lv),S.balance*0.05);"));
 });
 
+test('daily reset keeps one timer and does not create duplicate tick subscriptions', () => {
+  assert.ok(bot.includes('let dailyResetTimeout = null;'));
+  assert.ok(bot.includes('let dailyResetCountdown = null;'));
+  assert.ok(bot.includes('if(dailyResetCountdown){ clearInterval(dailyResetCountdown); dailyResetCountdown=null; }'));
+  assert.ok(bot.includes('if(dailyResetTimeout){ clearTimeout(dailyResetTimeout); dailyResetTimeout=null; }'));
+  const resetStart = bot.indexOf('function scheduleDailyReset(){');
+  const resetEnd = bot.indexOf('// ─────────────────────────────────────────────────────────────\n//  REST HELPER', resetStart);
+  const resetBody = bot.slice(resetStart, resetEnd);
+  assert.doesNotMatch(resetBody,/subscribeTicks\(\)/);
+});
+
 test('settlement-aware entry gate remains active', () => {
   assert.ok(bot.includes('const ENTRY_RESET_TICKS = 3;'));
   assert.ok(bot.includes('const POST_SETTLEMENT_COOLDOWN_MS = 3000;'));

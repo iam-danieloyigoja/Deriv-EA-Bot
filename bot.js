@@ -78,6 +78,8 @@ const S = {
 };
 
 let nextResetIn = 0;
+let dailyResetTimeout = null;
+let dailyResetCountdown = null;
 const ENTRY_RESET_TICKS = 3;
 const POST_SETTLEMENT_COOLDOWN_MS = 3000;
 
@@ -209,13 +211,20 @@ server.listen(CONFIG.PORT, () => {
 //  MIDNIGHT RESET
 // ─────────────────────────────────────────────────────────────
 function scheduleDailyReset(){
+  if(dailyResetCountdown){ clearInterval(dailyResetCountdown); dailyResetCountdown=null; }
+  if(dailyResetTimeout){ clearTimeout(dailyResetTimeout); dailyResetTimeout=null; }
+
   const now=new Date();
   const next=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));
   const delay=next-now;
   nextResetIn=Math.floor(delay/1000);
-  const countdown=setInterval(()=>{ nextResetIn=Math.max(0,nextResetIn-1); },1000);
-  setTimeout(()=>{
-    clearInterval(countdown);
+
+  dailyResetCountdown=setInterval(()=>{ nextResetIn=Math.max(0,nextResetIn-1); },1000);
+  dailyResetTimeout=setTimeout(()=>{
+    clearInterval(dailyResetCountdown);
+    dailyResetCountdown=null;
+    dailyResetTimeout=null;
+
     log.info('--- Midnight reset: counters cleared ---');
     S.startBalance=S.balance; S.lowestBalance=S.balance;
     S.dailyPnl=0; S.wins=0; S.losses=0; S.trades=0;
@@ -223,8 +232,8 @@ function scheduleDailyReset(){
     S.equityHistory=[S.balance]; S.dailyResets++;
     resetEntryGate();
     scheduleDailyReset();
-    if(!S.inTrade) subscribeTicks();
   }, delay);
+
   log.info('Next daily reset in '+Math.floor(delay/3600000)+'h '+Math.floor((delay%3600000)/60000)+'m');
 }
 
