@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const bot = fs.readFileSync(path.join(__dirname,'../bot.js'),'utf8');
 const server = fs.readFileSync(path.join(__dirname,'../dashboard/simulator-server.js'),'utf8');
+const client = fs.readFileSync(path.join(__dirname,'../dashboard/simulator.js'),'utf8');
 
 test('demo and live credentials are separated with explicit live gate', () => {
   assert.ok(bot.includes("DEMO_MODE ? process.env.DERIV_DEMO_API_TOKEN : process.env.DERIV_API_TOKEN"));
@@ -83,9 +84,22 @@ test('real-contract preflight applies to demo-contract and live modes', () => {
   assert.ok(bot.includes("CALL/PUT not offered for "));
 });
 
-test('initial live acceptance run auto-pauses', () => {
-  assert.ok(bot.includes("LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '3')"));
-  assert.ok(bot.includes("if(!CONFIG.DEMO_MODE&&CONFIG.LIVE_MAX_TRADES>0&&S.trades>=CONFIG.LIVE_MAX_TRADES)"));
+test('live trading uses a finite 100-trade batch counter', () => {
+  assert.ok(bot.includes("LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '100')"));
+  assert.ok(bot.includes("if(!CONFIG.DEMO_MODE) S.liveBatchTrades++;"));
+  assert.ok(bot.includes("S.liveBatchTrades>=CONFIG.LIVE_MAX_TRADES"));
+  assert.ok(bot.includes("Live batch limit reached: "));
+});
+
+test('live batch resets from RESET FORM and an instrument change', () => {
+  assert.ok(bot.includes("cmd.action === 'reset-live-batch'"));
+  assert.ok(bot.includes("resetLiveBatch('RESET FORM')"));
+  assert.ok(bot.includes("resetLiveBatch('instrument changed to '+CONFIG.INSTRUMENT)"));
+  assert.ok(server.includes("liveBatchTrades: Number.isSafeInteger(state.liveBatchTrades)"));
+  assert.ok(server.includes("liveMaxTrades: Number.isSafeInteger(config.LIVE_MAX_TRADES)"));
+  assert.ok(client.includes("postControl({action:'reset-live-batch'})"));
+  assert.ok(client.includes("data.liveBatchTrades"));
+  assert.ok(client.includes("data.liveMaxTrades"));
 });
 
 test('authenticated dashboard controls support explicit live mode', () => {

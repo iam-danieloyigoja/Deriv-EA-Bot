@@ -147,6 +147,8 @@ function snapshot(state, config) {
     losses: Number.isSafeInteger(state.losses) ? state.losses : 0,
     consecutiveLoss: Number.isSafeInteger(state.consecutiveLoss) ? state.consecutiveLoss : 0,
     trades: Number.isSafeInteger(state.trades) ? state.trades : 0,
+    liveBatchTrades: Number.isSafeInteger(state.liveBatchTrades) ? state.liveBatchTrades : 0,
+    liveMaxTrades: Number.isSafeInteger(config.LIVE_MAX_TRADES) ? config.LIVE_MAX_TRADES : 0,
     lastPrice: safeNumber(state.lastPrice),
     priceHistory: safeHistory(state.priceHistory, 80),
     equityHistory: safeHistory(state.equityHistory, 80),

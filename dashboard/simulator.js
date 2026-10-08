@@ -105,8 +105,11 @@ function renderControls(data) {
   if (settingsLocked) {
     text('control-hint','A trade is completing. Start/stop remains available; settings unlock after settlement.');
   } else {
+    const batch = data.liveMode && number(data.liveMaxTrades) && data.liveMaxTrades > 0
+      ? ` · live batch ${number(data.liveBatchTrades) ? data.liveBatchTrades : 0}/${data.liveMaxTrades}`
+      : '';
     text('control-hint',
-      `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}.`);
+      `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}${batch}.`);
   }
 
   toggle.textContent = data.running ? 'STOP BOT' : 'START BOT';
@@ -137,7 +140,10 @@ function render(data) {
   text('pnl',signedMoney(data.dailyPnl));
   element('pnl').className = number(data.dailyPnl) ? data.dailyPnl < 0 ? 'negative' : 'positive' : '';
   text('drawdown',number(data.drawdown) ? `${numeric(data.drawdown,1)}%` : '—');
-  text('trades',String(number(data.trades) ? data.trades : 0));
+  text('trades',
+    data.liveMode && number(data.liveMaxTrades) && data.liveMaxTrades > 0
+      ? `${number(data.liveBatchTrades) ? data.liveBatchTrades : 0} / ${data.liveMaxTrades}`
+      : String(number(data.trades) ? data.trades : 0));
   text('win-rate',data.trades > 0 ? `${numeric(data.wins / data.trades * 100,0)}%` : '—');
   text('streak',number(data.consecutiveLoss) && data.consecutiveLoss > 0 ? `${data.consecutiveLoss} losses` : data.trades > 0 ? '0' : '—');
 
@@ -244,10 +250,16 @@ async function poll() {
   element(id).addEventListener('change',() => { settingsDirty = true; showControlMessage(''); });
 });
 
-element('reset-settings').addEventListener('click',() => {
+element('reset-settings').addEventListener('click',async () => {
   settingsDirty = false;
-  showControlMessage('');
   if (latest) fillSettings(latest);
+
+  if (latest && latest.liveMode) {
+    await postControl({action:'reset-live-batch'});
+    return;
+  }
+
+  showControlMessage('');
 });
 
 element('apply-settings').addEventListener('click',async () => {

@@ -23,7 +23,7 @@ const CONFIG = {
   DEMO_CONTRACT_EXECUTION : DEMO_MODE && process.env.DEMO_CONTRACT_EXECUTION === 'true',
   DEMO_CONTRACT_MAX_TRADES: parseInt(process.env.DEMO_CONTRACT_MAX_TRADES || '3'),
   LIVE_TRADING_ENABLED     : process.env.LIVE_TRADING_ENABLED === 'true',
-  LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '3'),
+  LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '100'),
   DERIV_REAL_ACCOUNT_ID    : (process.env.DERIV_REAL_ACCOUNT_ID || '').trim(),
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
   BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '0.35'),
@@ -65,7 +65,7 @@ const SYMBOL_MAP = {
 const S = {
   ws:null, accountId:null,
   balance:0, startBalance:0, lowestBalance:Infinity,
-  wins:0, losses:0, trades:0, consecutiveLoss:0,
+  wins:0, losses:0, trades:0, consecutiveLoss:0, liveBatchTrades:0,
   stopped:true, manualStop:true, ticks:[], inTrade:false,
   reqId:1, pendingCbs:{}, dailyPnl:0,
   sessionStart:new Date(), reconnects:0,
@@ -108,6 +108,12 @@ function simulatorControlError(message) {
   return error;
 }
 
+function resetLiveBatch(reason) {
+  if (CONFIG.DEMO_MODE) return;
+  S.liveBatchTrades = 0;
+  log.info('Live batch counter reset to 0/'+CONFIG.LIVE_MAX_TRADES+' ('+reason+')');
+}
+
 
 function reconnectSimulatorFeed() {
   const old = S.ws;
@@ -133,11 +139,20 @@ const simulatorControls = {
     }
 
     if (cmd.action === 'start') {
+      if (!CONFIG.DEMO_MODE && CONFIG.LIVE_MAX_TRADES > 0 && S.liveBatchTrades >= CONFIG.LIVE_MAX_TRADES) {
+        throw simulatorControlError('Live batch limit reached. Use RESET FORM or change instrument before starting another batch.');
+      }
       S.manualStop = false;
       S.stopped = false;
-          if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
+      if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
       log.info('Bot started from app');
       return { running:true };
+    }
+
+    if (cmd.action === 'reset-live-batch') {
+      if (S.inTrade) throw simulatorControlError('Wait for the current trade to finish before resetting the live batch.');
+      resetLiveBatch('RESET FORM');
+      return { liveBatchTrades:S.liveBatchTrades, liveMaxTrades:CONFIG.LIVE_MAX_TRADES };
     }
 
     if (cmd.action === 'stop') {
@@ -173,7 +188,10 @@ const simulatorControls = {
         ' | DD ' + CONFIG.MAX_DAILY_DD + '% | target +' + CONFIG.DAILY_TARGET + '%'
       );
 
-      if (instrumentChanged) reconnectSimulatorFeed();
+      if (instrumentChanged) {
+        resetLiveBatch('instrument changed to '+CONFIG.INSTRUMENT);
+        reconnectSimulatorFeed();
+      }
 
       return {
         instrument:CONFIG.INSTRUMENT,
@@ -504,6 +522,7 @@ function simulateTrade(signal,stake){
 
 function recordResult(won,profit,balAfter,signal){
   S.trades++;
+  if(!CONFIG.DEMO_MODE) S.liveBatchTrades++;
   const synthetic=CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION;
   if(synthetic){
     S.balance=balAfter??parseFloat((S.balance+profit).toFixed(2));
@@ -525,9 +544,9 @@ function recordResult(won,profit,balAfter,signal){
     S.stopped=true; S.manualStop=true;
     log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');
   }
-  if(!CONFIG.DEMO_MODE&&CONFIG.LIVE_MAX_TRADES>0&&S.trades>=CONFIG.LIVE_MAX_TRADES){
+  if(!CONFIG.DEMO_MODE&&CONFIG.LIVE_MAX_TRADES>0&&S.liveBatchTrades>=CONFIG.LIVE_MAX_TRADES){
     S.stopped=true; S.manualStop=true;
-    log.stop('Live acceptance limit reached: '+S.trades+' trades. Paused.');
+    log.stop('Live batch limit reached: '+S.liveBatchTrades+'/'+CONFIG.LIVE_MAX_TRADES+' completed trades. Paused.');
   }
 }
 
