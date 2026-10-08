@@ -72,7 +72,6 @@ const S = {
   recentLogs:[], recentTrades:[],
   lastPrice:0, priceHistory:[], equityHistory:[],
   currentSignal:null, dailyResets:0,
-  entryArmed:true, neutralTicks:0, nextEntryAt:0,
   activeContractId:null, tradeStartBalance:null,
   indicators:{ rsi:50, stochRsi:50, emaSignal:'—', macd:0, squeeze:false, spike:false },
 };
@@ -80,8 +79,6 @@ const S = {
 let nextResetIn = 0;
 let dailyResetTimeout = null;
 let dailyResetCountdown = null;
-const ENTRY_RESET_TICKS = 3;
-const POST_SETTLEMENT_COOLDOWN_MS = 3000;
 
 const tsISO = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const ts    = () => new Date().toTimeString().slice(0,8);
@@ -111,11 +108,6 @@ function simulatorControlError(message) {
   return error;
 }
 
-function resetEntryGate() {
-  S.entryArmed = true;
-  S.neutralTicks = 0;
-  S.nextEntryAt = 0;
-}
 
 function reconnectSimulatorFeed() {
   const old = S.ws;
@@ -125,7 +117,6 @@ function reconnectSimulatorFeed() {
   S.priceHistory = [];
   S.lastPrice = 0;
   S.currentSignal = null;
-  resetEntryGate();
 
   if (old) {
     try { old.removeAllListeners('close'); } catch {}
@@ -144,8 +135,7 @@ const simulatorControls = {
     if (cmd.action === 'start') {
       S.manualStop = false;
       S.stopped = false;
-      resetEntryGate();
-      if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
+          if (!S.ws || S.ws.readyState !== WebSocket.OPEN) reconnectSimulatorFeed();
       log.info('Bot started from app');
       return { running:true };
     }
@@ -230,8 +220,7 @@ function scheduleDailyReset(){
     S.dailyPnl=0; S.wins=0; S.losses=0; S.trades=0;
     S.consecutiveLoss=0; S.stopped=Boolean(S.manualStop);
     S.equityHistory=[S.balance]; S.dailyResets++;
-    resetEntryGate();
-    scheduleDailyReset();
+      scheduleDailyReset();
   }, delay);
 
   log.info('Next daily reset in '+Math.floor(delay/3600000)+'h '+Math.floor((delay%3600000)/60000)+'m');
@@ -409,19 +398,7 @@ function onTick(tick){
   if(S.ticks.length<30) return;
   const signal=analyze(S.ticks);
   S.currentSignal=signal;
-
-  if(!signal){
-    S.neutralTicks++;
-    if(S.neutralTicks>=ENTRY_RESET_TICKS) S.entryArmed=true;
-    return;
-  }
-
-  S.neutralTicks=0;
-  if(!S.entryArmed) return;
-  if(Date.now()<S.nextEntryAt) return;
-
-  S.entryArmed=false;
-  placeTrade(signal);
+  if(signal) placeTrade(signal);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -482,7 +459,6 @@ function placeTrade(signal){
     if(proposalMsg.error){
       log.warn('Proposal failed: '+proposalMsg.error.message);
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-      S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
       return;
     }
     const proposal=proposalMsg.proposal||{};
@@ -491,7 +467,6 @@ function placeTrade(signal){
     if(!proposalId||!Number.isFinite(askPrice)){
       log.warn('Proposal failed: missing proposal ID or ask price.');
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-      S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
       return;
     }
     log.trade('Proposal accepted | ID: '+proposalId+' | Price:$'+askPrice.toFixed(2));
@@ -499,7 +474,6 @@ function placeTrade(signal){
       if(msg.error){
         log.warn('Order failed: '+msg.error.message);
         S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-        S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
         return;
       }
       S.activeContractId=msg.buy.contract_id;
@@ -547,7 +521,6 @@ function recordResult(won,profit,balAfter,signal){
   if(won){S.wins++;S.consecutiveLoss=0;log.win('WIN +$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | WR:'+wr()+'% | #'+S.trades);}
   else{S.losses++;S.consecutiveLoss++;log.loss('LOSS -$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | Streak:'+S.consecutiveLoss);}
   S.inTrade=false; S.currentSignal=null; S.tradeStartBalance=null;
-  S.nextEntryAt=Date.now()+POST_SETTLEMENT_COOLDOWN_MS;
   if(CONFIG.DEMO_CONTRACT_EXECUTION&&CONFIG.DEMO_CONTRACT_MAX_TRADES>0&&S.trades>=CONFIG.DEMO_CONTRACT_MAX_TRADES){
     S.stopped=true; S.manualStop=true;
     log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');

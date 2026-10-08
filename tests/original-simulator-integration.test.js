@@ -56,12 +56,11 @@ test('daily reset keeps one timer and does not create duplicate tick subscriptio
   assert.doesNotMatch(resetBody,/subscribeTicks\(\)/);
 });
 
-test('settlement-aware entry gate remains active', () => {
-  assert.ok(bot.includes('const ENTRY_RESET_TICKS = 3;'));
-  assert.ok(bot.includes('const POST_SETTLEMENT_COOLDOWN_MS = 3000;'));
-  assert.ok(bot.includes('if(S.neutralTicks>=ENTRY_RESET_TICKS) S.entryArmed=true;'));
-  assert.ok(bot.includes('if(!S.entryArmed) return;'));
-  assert.ok(bot.includes('if(Date.now()<S.nextEntryAt) return;'));
+test('pre-cooldown trade entry behavior is restored', () => {
+  assert.ok(bot.includes('S.currentSignal=signal;\n  if(signal) placeTrade(signal);'));
+  assert.doesNotMatch(bot,/ENTRY_RESET_TICKS/);
+  assert.doesNotMatch(bot,/POST_SETTLEMENT_COOLDOWN_MS/);
+  assert.doesNotMatch(bot,/entryArmed|neutralTicks|nextEntryAt|resetEntryGate/);
 });
 
 test('CALL PUT 5-tick proposal-buy execution and original map remain', () => {
