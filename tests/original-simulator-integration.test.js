@@ -16,6 +16,13 @@ test('demo and live credentials are separated with explicit live gate', () => {
   assert.doesNotMatch(bot,/pat_[A-Za-z0-9]{20,}/);
 });
 
+test('authorized real-account diagnostic exposes only account metadata needed for selection', () => {
+  assert.ok(bot.includes("Authorized real Options accounts: "));
+  assert.ok(bot.includes("accountIdOf(a)+' | balance:'"));
+  assert.ok(bot.includes("' | currency:'"));
+  assert.ok(bot.includes("' | status:'"));
+});
+
 test('live account selection refuses ambiguous real accounts', () => {
   assert.ok(bot.includes("DERIV_REAL_ACCOUNT_ID"));
   assert.ok(bot.includes("Multiple real accounts found. Set DERIV_REAL_ACCOUNT_ID before live trading."));

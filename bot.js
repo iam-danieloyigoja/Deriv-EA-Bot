@@ -282,6 +282,11 @@ async function getAccountId(){
     if(!account) throw new Error('A Deriv demo account was not found.');
   }else{
     const realAccounts=list.filter(a=>a.account_type==='real'||(!a.is_virtual&&a.type!=='demo'));
+    const accountSummary=realAccounts.map(a=>{
+      const bal=Number(a.balance);
+      return accountIdOf(a)+' | balance:'+(Number.isFinite(bal)?'$'+bal.toFixed(2):'n/a')+' | currency:'+(a.currency||'n/a')+' | status:'+(a.status||'n/a');
+    });
+    log.info('Authorized real Options accounts: '+(accountSummary.join(' ; ')||'none'));
     if(CONFIG.DERIV_REAL_ACCOUNT_ID){
       account=realAccounts.find(a=>accountIdOf(a)===CONFIG.DERIV_REAL_ACCOUNT_ID);
       if(!account) throw new Error('DERIV_REAL_ACCOUNT_ID was not found in the authorized real accounts.');
