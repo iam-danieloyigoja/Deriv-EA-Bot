@@ -128,13 +128,13 @@ function snapshot(state, config) {
     inTrade: Boolean(state.inTrade),
     accountType: 'ORIGINAL BOT - '+tradeMode,
     balanceSource: simulatorMode ? 'DERIV DEMO START BALANCE + SIMULATED P&L' : 'DERIV ACCOUNT BALANCE',
-    tradeSource: simulatorMode ? 'ORIGINAL BOT SIMULATOR' : 'DERIV MULTIPLIERS · 5-TICK MARKET EXIT',
+    tradeSource: simulatorMode ? 'ORIGINAL BOT SIMULATOR' : 'DERIV MULTIPLIERS · TP/SL + MAX-HOLD EXIT',
     modeSummary: liveMode
       ? 'Live account connected. Trading starts only from the authenticated dashboard.'
       : demoContractMode
-        ? 'Deriv demo account with real demo CALL/PUT contracts.'
+        ? 'Deriv demo account with real Boom/Crash multiplier contracts.'
         : 'Original strategy simulator.',
-    feedNote: simulatorMode ? 'No Deriv buy orders are sent.' : 'Contract execution uses Deriv multiplier proposal -> buy -> 5-tick market sell -> settlement.',
+    feedNote: simulatorMode ? 'No Deriv buy orders are sent.' : 'Contract execution uses Deriv multiplier proposal -> buy -> TP/SL monitoring -> max-hold backstop -> market sell -> settlement.',
     instrument: typeof config.INSTRUMENT === 'string' ? config.INSTRUMENT : null,
     allowedInstruments: instruments,
     balance: safeNumber(state.balance),
@@ -172,6 +172,9 @@ function snapshot(state, config) {
     martiMult: safeNumber(config.MARTI_MULT),
     multiplier: safeNumber(config.MULTIPLIER),
     multiplierExitTicks: safeNumber(config.MULTIPLIER_EXIT_TICKS),
+    multiplierTakeProfit: safeNumber(config.MULTIPLIER_TAKE_PROFIT),
+    multiplierStopLoss: safeNumber(config.MULTIPLIER_STOP_LOSS),
+    multiplierMaxHoldTicks: safeNumber(config.MULTIPLIER_MAX_HOLD_TICKS),
     recentTrades: (Array.isArray(state.recentTrades) ? state.recentTrades.slice(0, 12) : []).map(t => ({
       strategy: String(t.strategy || '—').slice(0, 70),
       dir: ['up','down'].includes(t.dir) ? t.dir : 'unknown',

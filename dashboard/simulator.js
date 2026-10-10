@@ -109,7 +109,7 @@ function renderControls(data) {
       ? ` · live batch ${number(data.liveBatchTrades) ? data.liveBatchTrades : 0}/${data.liveMaxTrades}`
       : '';
     const multiplier = number(data.multiplier)
-      ? ` · multiplier x${numeric(data.multiplier,0)} · exit ${numeric(data.multiplierExitTicks,0)} ticks`
+      ? ` · multiplier x${numeric(data.multiplier,0)} · TP +$${numeric(data.multiplierTakeProfit,2)} · SL -$${numeric(data.multiplierStopLoss,2)} · max ${numeric(data.multiplierMaxHoldTicks,0)} ticks`
       : '';
     text('control-hint',
       `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}${multiplier}${batch}.`);

@@ -34,6 +34,9 @@ const CONFIG = {
   MARTI_MAX_LEVEL : parseInt(process.env.MARTI_MAX_LEVEL  || '3'),
   MULTIPLIER      : parseInt(process.env.MULTIPLIER       || '100'),
   MULTIPLIER_EXIT_TICKS : parseInt(process.env.MULTIPLIER_EXIT_TICKS || '5'),
+  MULTIPLIER_TAKE_PROFIT : parseFloat(process.env.MULTIPLIER_TAKE_PROFIT || '0.05'),
+  MULTIPLIER_STOP_LOSS   : parseFloat(process.env.MULTIPLIER_STOP_LOSS   || '0.05'),
+  MULTIPLIER_MAX_HOLD_TICKS : parseInt(process.env.MULTIPLIER_MAX_HOLD_TICKS || '100'),
   PORT            : parseInt(process.env.PORT             || '8080'),
 };
 
@@ -65,6 +68,15 @@ if (!Number.isFinite(CONFIG.BASE_STAKE) || CONFIG.BASE_STAKE < 1) {
 }
 if (!Number.isSafeInteger(CONFIG.MULTIPLIER_EXIT_TICKS) || CONFIG.MULTIPLIER_EXIT_TICKS < 1 || CONFIG.MULTIPLIER_EXIT_TICKS > 100) {
   throw new Error('MULTIPLIER_EXIT_TICKS must be an integer from 1 to 100.');
+}
+if (!Number.isFinite(CONFIG.MULTIPLIER_TAKE_PROFIT) || CONFIG.MULTIPLIER_TAKE_PROFIT <= 0 || CONFIG.MULTIPLIER_TAKE_PROFIT > 1000) {
+  throw new Error('MULTIPLIER_TAKE_PROFIT must be greater than 0.');
+}
+if (!Number.isFinite(CONFIG.MULTIPLIER_STOP_LOSS) || CONFIG.MULTIPLIER_STOP_LOSS <= 0 || CONFIG.MULTIPLIER_STOP_LOSS > 1000) {
+  throw new Error('MULTIPLIER_STOP_LOSS must be greater than 0.');
+}
+if (!Number.isSafeInteger(CONFIG.MULTIPLIER_MAX_HOLD_TICKS) || CONFIG.MULTIPLIER_MAX_HOLD_TICKS < 1 || CONFIG.MULTIPLIER_MAX_HOLD_TICKS > 1000) {
+  throw new Error('MULTIPLIER_MAX_HOLD_TICKS must be an integer from 1 to 1000.');
 }
 
 const SYMBOL_MAP = {
@@ -383,7 +395,9 @@ function validateContractOffering(){
         }
         log.info('Multiplier preflight passed: '+CONFIG.INSTRUMENT+' actual symbol '+symbol+
           ' | MULTUP/MULTDOWN | x'+CONFIG.MULTIPLIER+
-          ' | market exit after '+CONFIG.MULTIPLIER_EXIT_TICKS+' ticks.');
+          ' | TP +$'+CONFIG.MULTIPLIER_TAKE_PROFIT.toFixed(2)+
+          ' | SL -$'+CONFIG.MULTIPLIER_STOP_LOSS.toFixed(2)+
+          ' | max '+CONFIG.MULTIPLIER_MAX_HOLD_TICKS+' ticks.');
         resolve(true);
       }).catch(error=>{
         log.stop('Multiplier preflight failed: '+error.message);
@@ -469,7 +483,9 @@ function onTick(tick){
   if(S.inTrade){
     if(S.activeContractId&&!S.exitRequested){
       S.tradeTicks++;
-      if(S.tradeTicks>=CONFIG.MULTIPLIER_EXIT_TICKS) closeActiveMultiplierAtMarket();
+      if(S.tradeTicks>=CONFIG.MULTIPLIER_MAX_HOLD_TICKS){
+        closeActiveMultiplierAtMarket('MAX HOLD '+CONFIG.MULTIPLIER_MAX_HOLD_TICKS+' TICKS');
+      }
     }
     return;
   }
@@ -521,11 +537,12 @@ function getStake(){
   return Math.min(CONFIG.BASE_STAKE*Math.pow(CONFIG.MARTI_MULT,lv),S.balance*0.05);
 }
 
-function closeActiveMultiplierAtMarket(){
+function closeActiveMultiplierAtMarket(reason='MANUAL EXIT'){
   if(!S.inTrade||!S.activeContractId||S.exitRequested) return;
   S.exitRequested=true;
   const contractId=S.activeContractId;
-  log.trade(CONFIG.MULTIPLIER_EXIT_TICKS+'-tick exit reached | Selling multiplier contract '+contractId+' at market');
+  if(S.activeTradeMeta) S.activeTradeMeta.exitReason=reason;
+  log.trade(reason+' | Selling multiplier contract '+contractId+' at market');
   send({sell:contractId,price:0},msg=>{
     if(msg.error){
       S.exitRequested=false;
@@ -535,6 +552,7 @@ function closeActiveMultiplierAtMarket(){
     const soldFor=parseFloat(((msg.sell||{}).sold_for));
     if(S.activeTradeMeta&&Number.isFinite(soldFor)) S.activeTradeMeta.sellResponsePrice=soldFor;
     log.trade('Market exit accepted | ID: '+contractId+
+      ' | reason:'+reason+
       (Number.isFinite(soldFor)?' | sold_for:$'+soldFor.toFixed(4):''));
   });
 }
@@ -566,6 +584,7 @@ function placeTrade(signal){
     proposalAsk:null,
     contractId:null,
     sellResponsePrice:null,
+    exitReason:null,
   };
 
   log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+
@@ -623,7 +642,9 @@ function placeTrade(signal){
       S.tradeTicks=0;
       S.exitRequested=false;
       log.trade('Multiplier order placed | ID: '+msg.buy.contract_id+
-        ' | exit after '+CONFIG.MULTIPLIER_EXIT_TICKS+' market ticks');
+        ' | TP +$'+CONFIG.MULTIPLIER_TAKE_PROFIT.toFixed(2)+
+        ' | SL -$'+CONFIG.MULTIPLIER_STOP_LOSS.toFixed(2)+
+        ' | max '+CONFIG.MULTIPLIER_MAX_HOLD_TICKS+' ticks');
       send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
     });
   });
@@ -632,10 +653,21 @@ function placeTrade(signal){
 function onContractUpdate(c){
   if(!c||!S.inTrade||!S.activeContractId) return;
   if(String(c.contract_id)!==String(S.activeContractId)) return;
-  const closed=Boolean(c.is_sold)||(c.status&&c.status!=='open');
-  if(!closed) return;
 
   const profit=parseFloat(c.profit);
+  const closed=Boolean(c.is_sold)||(c.status&&c.status!=='open');
+
+  if(!closed){
+    if(!S.exitRequested&&Number.isFinite(profit)){
+      if(profit>=CONFIG.MULTIPLIER_TAKE_PROFIT){
+        closeActiveMultiplierAtMarket('TAKE PROFIT +$'+profit.toFixed(4));
+      }else if(profit<=-CONFIG.MULTIPLIER_STOP_LOSS){
+        closeActiveMultiplierAtMarket('STOP LOSS $'+profit.toFixed(4));
+      }
+    }
+    return;
+  }
+
   if(!Number.isFinite(profit)) return;
 
   const rawBal=parseFloat(c.balance_after);
@@ -659,6 +691,7 @@ function onContractUpdate(c){
     ' | multiplier:x'+(meta.multiplier||CONFIG.MULTIPLIER)+
     ' | stake:$'+f(meta.stake,2)+
     ' | held_ticks:'+heldTicks+
+    ' | exit_reason:'+(meta.exitReason||'DERIV SETTLEMENT')+
     ' | signal_spot:'+f(meta.signalPrice)+
     ' | proposal_spot:'+f(meta.proposalSpot)+
     ' | entry_spot:'+f(entrySpot)+

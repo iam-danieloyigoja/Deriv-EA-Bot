@@ -75,7 +75,7 @@ test('actual Boom Crash multiplier defaults respect Deriv minimums', () => {
   assert.ok(html.includes('id="stake-input" type="number" min="1.00"'));
 });
 
-test('actual Boom Crash symbols use signal-directed multipliers with 5-tick market exit', () => {
+test('actual Boom Crash symbols use signal-directed multipliers with TP SL and max-hold exit', () => {
   assert.ok(bot.includes("BOOM500:'BOOM500'"));
   assert.ok(bot.includes("BOOM1000:'BOOM1000'"));
   assert.ok(bot.includes("CRASH500:'CRASH500'"));
@@ -86,7 +86,9 @@ test('actual Boom Crash symbols use signal-directed multipliers with 5-tick mark
   assert.ok(bot.includes("underlying_symbol:symbol"));
   assert.ok(bot.includes("send({buy:proposalId,price:askPrice}"));
   assert.ok(bot.includes("send({sell:contractId,price:0}"));
-  assert.ok(bot.includes("S.tradeTicks>=CONFIG.MULTIPLIER_EXIT_TICKS"));
+  assert.ok(bot.includes("S.tradeTicks>=CONFIG.MULTIPLIER_MAX_HOLD_TICKS"));
+  assert.ok(bot.includes("profit>=CONFIG.MULTIPLIER_TAKE_PROFIT"));
+  assert.ok(bot.includes("profit<=-CONFIG.MULTIPLIER_STOP_LOSS"));
 });
 
 
@@ -99,7 +101,17 @@ test('multiplier settlement logs entry exit and price telemetry', () => {
   assert.ok(bot.includes("' | buy_price:$'"));
   assert.ok(bot.includes("' | sell_price:$'"));
   assert.ok(bot.includes("' | pnl:$'"));
-  assert.ok(bot.includes("CONFIG.MULTIPLIER_EXIT_TICKS+'-tick exit reached"));
+  assert.ok(bot.includes("function closeActiveMultiplierAtMarket(reason='MANUAL EXIT')"));
+  assert.ok(bot.includes("' | exit_reason:'"));
+});
+
+test('multiplier threshold configuration defaults are finite and explicit', () => {
+  assert.ok(bot.includes("MULTIPLIER_TAKE_PROFIT : parseFloat(process.env.MULTIPLIER_TAKE_PROFIT || '0.05')"));
+  assert.ok(bot.includes("MULTIPLIER_STOP_LOSS   : parseFloat(process.env.MULTIPLIER_STOP_LOSS   || '0.05')"));
+  assert.ok(bot.includes("MULTIPLIER_MAX_HOLD_TICKS : parseInt(process.env.MULTIPLIER_MAX_HOLD_TICKS || '100')"));
+  assert.ok(server.includes("multiplierTakeProfit: safeNumber(config.MULTIPLIER_TAKE_PROFIT)"));
+  assert.ok(server.includes("multiplierStopLoss: safeNumber(config.MULTIPLIER_STOP_LOSS)"));
+  assert.ok(server.includes("multiplierMaxHoldTicks: safeNumber(config.MULTIPLIER_MAX_HOLD_TICKS)"));
 });
 
 test('real-contract preflight validates multiplier contracts without buying', () => {
