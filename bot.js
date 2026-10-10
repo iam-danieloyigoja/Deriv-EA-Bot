@@ -26,13 +26,13 @@ const CONFIG = {
   LIVE_MAX_TRADES          : parseInt(process.env.LIVE_MAX_TRADES || '100'),
   DERIV_REAL_ACCOUNT_ID    : (process.env.DERIV_REAL_ACCOUNT_ID || '').trim(),
   INSTRUMENT      : process.env.INSTRUMENT      || 'BOOM500',
-  BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '0.35'),
+  BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '1.00'),
   MAX_DAILY_DD    : parseFloat(process.env.MAX_DAILY_DD   || '10'),
   DAILY_TARGET    : parseFloat(process.env.DAILY_TARGET   || '15'),
   MARTINGALE      : process.env.MARTINGALE !== 'false',
   MARTI_MULT      : parseFloat(process.env.MARTI_MULT     || '1.8'),
   MARTI_MAX_LEVEL : parseInt(process.env.MARTI_MAX_LEVEL  || '3'),
-  MULTIPLIER      : parseInt(process.env.MULTIPLIER       || '50'),
+  MULTIPLIER      : parseInt(process.env.MULTIPLIER       || '100'),
   MULTIPLIER_EXIT_TICKS : parseInt(process.env.MULTIPLIER_EXIT_TICKS || '5'),
   PORT            : parseInt(process.env.PORT             || '8080'),
 };
@@ -57,8 +57,11 @@ if (CONFIG.DEMO_MODE) {
 }
 CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
-if (!Number.isSafeInteger(CONFIG.MULTIPLIER) || CONFIG.MULTIPLIER <= 0) {
-  throw new Error('MULTIPLIER must be a positive integer.');
+if (!Number.isSafeInteger(CONFIG.MULTIPLIER) || CONFIG.MULTIPLIER < 100) {
+  throw new Error('MULTIPLIER must be at least 100 for the actual Boom/Crash multiplier markets.');
+}
+if (!Number.isFinite(CONFIG.BASE_STAKE) || CONFIG.BASE_STAKE < 1) {
+  throw new Error('BASE_STAKE must be at least $1.00 for actual Boom/Crash multiplier execution.');
 }
 if (!Number.isSafeInteger(CONFIG.MULTIPLIER_EXIT_TICKS) || CONFIG.MULTIPLIER_EXIT_TICKS < 1 || CONFIG.MULTIPLIER_EXIT_TICKS > 100) {
   throw new Error('MULTIPLIER_EXIT_TICKS must be an integer from 1 to 100.');
@@ -182,7 +185,7 @@ const simulatorControls = {
       const target = Number(cmd.dailyTarget);
 
       if (!CONFIG.ALLOWED_INSTRUMENTS.includes(instrument)) throw simulatorControlError('Unsupported instrument.');
-      if (!Number.isFinite(stake) || stake < 0.35 || stake > 1000) throw simulatorControlError('Stake must be between $0.35 and $1000.');
+      if (!Number.isFinite(stake) || stake < 1 || stake > 1000) throw simulatorControlError('Stake must be between $1.00 and $1000 for actual Boom/Crash multipliers.');
       if (!Number.isFinite(maxDD) || maxDD < 0.1 || maxDD > 50) throw simulatorControlError('DD limit must be between 0.1% and 50%.');
       if (!Number.isFinite(target) || target < 0.1 || target > 100) throw simulatorControlError('Target profit must be between 0.1% and 100%.');
 
@@ -538,7 +541,7 @@ function placeTrade(signal){
   if(dd>=CONFIG.MAX_DAILY_DD) {log.stop('DD limit hit — paused until midnight');S.stopped=true;return;}
   if(pp>=CONFIG.DAILY_TARGET) {log.win('Daily target hit — paused until midnight');S.stopped=true;return;}
   const stake=parseFloat(getStake().toFixed(2));
-  if(stake<0.35){log.warn('Stake below minimum. Skipping.');return;}
+  if(stake<1){log.warn('Stake below actual Boom/Crash multiplier minimum of $1.00. Skipping.');return;}
 
   const contractType=signal.dir==='up'?'MULTUP':'MULTDOWN';
   const symbol=SYMBOL_MAP[CONFIG.INSTRUMENT];

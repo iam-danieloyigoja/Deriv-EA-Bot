@@ -64,6 +64,17 @@ test('pre-cooldown trade entry behavior is restored', () => {
   assert.doesNotMatch(bot,/entryArmed|neutralTicks|nextEntryAt|resetEntryGate/);
 });
 
+test('actual Boom Crash multiplier defaults respect Deriv minimums', () => {
+  assert.ok(bot.includes("BASE_STAKE      : parseFloat(process.env.BASE_STAKE     || '1.00')"));
+  assert.ok(bot.includes("MULTIPLIER      : parseInt(process.env.MULTIPLIER       || '100')"));
+  assert.ok(bot.includes("BASE_STAKE must be at least $1.00"));
+  assert.ok(bot.includes("MULTIPLIER must be at least 100"));
+  assert.ok(bot.includes("stake < 1 || stake > 1000"));
+  assert.ok(client.includes("data.baseStake.toFixed(2) : '1.00'"));
+  const html = fs.readFileSync(path.join(__dirname,'../dashboard/simulator.html'),'utf8');
+  assert.ok(html.includes('id="stake-input" type="number" min="1.00"'));
+});
+
 test('actual Boom Crash symbols use signal-directed multipliers with 5-tick market exit', () => {
   assert.ok(bot.includes("BOOM500:'BOOM500'"));
   assert.ok(bot.includes("BOOM1000:'BOOM1000'"));

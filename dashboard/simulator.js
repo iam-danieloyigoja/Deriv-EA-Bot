@@ -85,7 +85,7 @@ function fillSettings(data) {
   }
 
   select.value = data.instrument || instruments[0];
-  element('stake-input').value = number(data.baseStake) ? data.baseStake.toFixed(2) : '0.35';
+  element('stake-input').value = number(data.baseStake) ? data.baseStake.toFixed(2) : '1.00';
   element('dd-input').value = number(data.maxDD) ? data.maxDD.toFixed(1) : '10';
   element('target-input').value = number(data.dailyTarget) ? data.dailyTarget.toFixed(1) : '15';
 }
