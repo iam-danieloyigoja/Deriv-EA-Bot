@@ -108,8 +108,11 @@ function renderControls(data) {
     const batch = data.liveMode && number(data.liveMaxTrades) && data.liveMaxTrades > 0
       ? ` · live batch ${number(data.liveBatchTrades) ? data.liveBatchTrades : 0}/${data.liveMaxTrades}`
       : '';
+    const multiplier = number(data.multiplier)
+      ? ` · multiplier x${numeric(data.multiplier,0)} · exit ${numeric(data.multiplierExitTicks,0)} ticks`
+      : '';
     text('control-hint',
-      `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}${batch}.`);
+      `Original strategy unchanged. Base stake $${numeric(data.baseStake,2)} · DD ${numeric(data.maxDD,1)}% · target ${numeric(data.dailyTarget,1)}%${data.martingale ? ' · original martingale ON' : ' · martingale OFF'}${multiplier}${batch}.`);
   }
 
   toggle.textContent = data.running ? 'STOP BOT' : 'START BOT';

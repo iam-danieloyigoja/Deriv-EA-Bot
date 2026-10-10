@@ -64,24 +64,37 @@ test('pre-cooldown trade entry behavior is restored', () => {
   assert.doesNotMatch(bot,/entryArmed|neutralTicks|nextEntryAt|resetEntryGate/);
 });
 
-test('CALL PUT 5-tick proposal-buy execution and original map remain', () => {
-  assert.ok(bot.includes("BOOM500:'R_100'"));
-  assert.ok(bot.includes("BOOM1000:'R_75'"));
-  assert.ok(bot.includes("CRASH500:'R_50'"));
-  assert.ok(bot.includes("CRASH1000:'R_25'"));
-  assert.ok(bot.includes("proposal:1,"));
-  assert.ok(bot.includes("amount:stake,"));
-  assert.ok(bot.includes("basis:'stake',"));
-  assert.ok(bot.includes("contract_type:signal.dir==='up'?'CALL':'PUT'"));
-  assert.ok(bot.includes("duration:5,"));
-  assert.ok(bot.includes("duration_unit:'t',"));
+test('actual Boom Crash symbols use signal-directed multipliers with 5-tick market exit', () => {
+  assert.ok(bot.includes("BOOM500:'BOOM500'"));
+  assert.ok(bot.includes("BOOM1000:'BOOM1000'"));
+  assert.ok(bot.includes("CRASH500:'CRASH500'"));
+  assert.ok(bot.includes("CRASH1000:'CRASH1000'"));
+  assert.doesNotMatch(bot,/BOOM500:'R_100'|BOOM1000:'R_75'|CRASH500:'R_50'|CRASH1000:'R_25'/);
+  assert.ok(bot.includes("const contractType=signal.dir==='up'?'MULTUP':'MULTDOWN';"));
+  assert.ok(bot.includes("multiplier:CONFIG.MULTIPLIER"));
+  assert.ok(bot.includes("underlying_symbol:symbol"));
   assert.ok(bot.includes("send({buy:proposalId,price:askPrice}"));
+  assert.ok(bot.includes("send({sell:contractId,price:0}"));
+  assert.ok(bot.includes("S.tradeTicks>=CONFIG.MULTIPLIER_EXIT_TICKS"));
 });
 
-test('real-contract preflight applies to demo-contract and live modes', () => {
+
+test('real-contract preflight validates multiplier contracts without buying', () => {
   assert.ok(bot.includes("function validateContractOffering()"));
   assert.ok(bot.includes("if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }"));
-  assert.ok(bot.includes("CALL/PUT not offered for "));
+  assert.ok(bot.includes("contractTypes.includes('MULTUP')"));
+  assert.ok(bot.includes("contractTypes.includes('MULTDOWN')"));
+  assert.ok(bot.includes("Multiplier preflight passed: "));
+  const start=bot.indexOf('function validateContractOffering(){');
+  const end=bot.indexOf('function connectWebSocket',start);
+  assert.doesNotMatch(bot.slice(start,end),/send\(\{buy:/);
+});
+
+test('multiplier execution preserves the original bidirectional signal rules', () => {
+  assert.ok(bot.includes("if(sU&&R>65) return{dir:'down',strategy:'Spike Reversal'};"));
+  assert.ok(bot.includes("if(sD&&R<35) return{dir:'up',  strategy:'Spike Reversal'};"));
+  assert.ok(bot.includes("if(tr==='up'  &&p<=E8*1.001&&MH>0&&mc==='up')  return{dir:'up',  strategy:'EMA Pullback'};"));
+  assert.ok(bot.includes("if(tr==='down'&&p>=E8*0.999&&MH<0&&mc==='down') return{dir:'down',strategy:'EMA Pullback'};"));
 });
 
 test('live trading uses a finite 100-trade batch counter', () => {

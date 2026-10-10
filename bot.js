@@ -32,6 +32,8 @@ const CONFIG = {
   MARTINGALE      : process.env.MARTINGALE !== 'false',
   MARTI_MULT      : parseFloat(process.env.MARTI_MULT     || '1.8'),
   MARTI_MAX_LEVEL : parseInt(process.env.MARTI_MAX_LEVEL  || '3'),
+  MULTIPLIER      : parseInt(process.env.MULTIPLIER       || '50'),
+  MULTIPLIER_EXIT_TICKS : parseInt(process.env.MULTIPLIER_EXIT_TICKS || '5'),
   PORT            : parseInt(process.env.PORT             || '8080'),
 };
 
@@ -55,8 +57,15 @@ if (CONFIG.DEMO_MODE) {
 }
 CONFIG.ALLOWED_INSTRUMENTS = ['BOOM500','BOOM1000','CRASH500','CRASH1000'];
 
+if (!Number.isSafeInteger(CONFIG.MULTIPLIER) || CONFIG.MULTIPLIER <= 0) {
+  throw new Error('MULTIPLIER must be a positive integer.');
+}
+if (!Number.isSafeInteger(CONFIG.MULTIPLIER_EXIT_TICKS) || CONFIG.MULTIPLIER_EXIT_TICKS < 1 || CONFIG.MULTIPLIER_EXIT_TICKS > 100) {
+  throw new Error('MULTIPLIER_EXIT_TICKS must be an integer from 1 to 100.');
+}
+
 const SYMBOL_MAP = {
-  BOOM500:'R_100', BOOM1000:'R_75', CRASH500:'R_50', CRASH1000:'R_25',
+  BOOM500:'BOOM500', BOOM1000:'BOOM1000', CRASH500:'CRASH500', CRASH1000:'CRASH1000',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -73,6 +82,7 @@ const S = {
   lastPrice:0, priceHistory:[], equityHistory:[],
   currentSignal:null, dailyResets:0,
   activeContractId:null, tradeStartBalance:null,
+  tradeTicks:0, exitRequested:false,
   indicators:{ rsi:50, stochRsi:50, emaSignal:'—', macd:0, squeeze:false, spike:false },
 };
 
@@ -322,26 +332,60 @@ async function getOTP(accountId){
 function validateContractOffering(){
   return new Promise(resolve=>{
     if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }
-    send({contracts_for:SYMBOL_MAP[CONFIG.INSTRUMENT]},msg=>{
+
+    const symbol=SYMBOL_MAP[CONFIG.INSTRUMENT];
+    send({contracts_for:symbol},msg=>{
       if(msg.error){
         log.stop('Contract preflight failed: '+msg.error.message);
         S.stopped=true; S.manualStop=true; resolve(false); return;
       }
+
       const available=((msg.contracts_for||{}).available)||[];
-      const call=available.find(c=>c.contract_type==='CALL');
-      const put=available.find(c=>c.contract_type==='PUT');
       const contractTypes=[...new Set(available.map(c=>c.contract_type).filter(Boolean))].sort();
-      log.info('Available contract types for '+CONFIG.INSTRUMENT+' ['+SYMBOL_MAP[CONFIG.INSTRUMENT]+']: '+(contractTypes.join(', ')||'none'));
-      if(!call||!put){
-        log.stop('CALL/PUT not offered for '+CONFIG.INSTRUMENT+' on this Deriv account.');
+      const hasUp=contractTypes.includes('MULTUP');
+      const hasDown=contractTypes.includes('MULTDOWN');
+
+      log.info('Available contract types for '+CONFIG.INSTRUMENT+' ['+symbol+']: '+(contractTypes.join(', ')||'none'));
+
+      if(!hasUp||!hasDown){
+        log.stop('MULTUP/MULTDOWN not both offered for '+CONFIG.INSTRUMENT+' on this Deriv account.');
         S.stopped=true; S.manualStop=true; resolve(false); return;
       }
-      if((call.sentiment&&call.sentiment!=='up')||(put.sentiment&&put.sentiment!=='down')){
-        log.stop('CALL/PUT direction validation failed for '+CONFIG.INSTRUMENT+'.');
-        S.stopped=true; S.manualStop=true; resolve(false); return;
-      }
-      log.info('Contract preflight passed: '+CONFIG.INSTRUMENT+' CALL/PUT available.');
-      resolve(true);
+
+      const probe=contractType=>new Promise(done=>{
+        send({
+          proposal:1,
+          amount:CONFIG.BASE_STAKE,
+          basis:'stake',
+          contract_type:contractType,
+          currency:'USD',
+          duration_unit:'s',
+          multiplier:CONFIG.MULTIPLIER,
+          underlying_symbol:symbol,
+        },proposalMsg=>{
+          if(proposalMsg.error){
+            done({ok:false,type:contractType,error:proposalMsg.error.message});
+            return;
+          }
+          const proposal=proposalMsg.proposal||{};
+          done({ok:Boolean(proposal.id),type:contractType,error:proposal.id?'':'missing proposal ID'});
+        });
+      });
+
+      Promise.all([probe('MULTUP'),probe('MULTDOWN')]).then(results=>{
+        const failed=results.find(r=>!r.ok);
+        if(failed){
+          log.stop('Multiplier preflight failed for '+failed.type+' x'+CONFIG.MULTIPLIER+': '+failed.error);
+          S.stopped=true; S.manualStop=true; resolve(false); return;
+        }
+        log.info('Multiplier preflight passed: '+CONFIG.INSTRUMENT+' actual symbol '+symbol+
+          ' | MULTUP/MULTDOWN | x'+CONFIG.MULTIPLIER+
+          ' | market exit after '+CONFIG.MULTIPLIER_EXIT_TICKS+' ticks.');
+        resolve(true);
+      }).catch(error=>{
+        log.stop('Multiplier preflight failed: '+error.message);
+        S.stopped=true; S.manualStop=true; resolve(false);
+      });
     });
   });
 }
@@ -407,13 +451,32 @@ function subscribeTicks(){
 }
 
 function onTick(tick){
-  if(!tick||S.stopped||S.inTrade) return;
+  if(!tick) return;
+
   const price=parseFloat(tick.quote);
-  S.ticks.push(price); S.lastPrice=price;
+  if(!Number.isFinite(price)) return;
+
+  S.lastPrice=price;
   S.priceHistory.push(price);
-  if(S.ticks.length>200) S.ticks.shift();
   if(S.priceHistory.length>200) S.priceHistory.shift();
+
+  // An already-open multiplier contract must still count market ticks even if
+  // the user presses STOP. STOP prevents new entries; it does not strand an
+  // existing multiplier position.
+  if(S.inTrade){
+    if(S.activeContractId&&!S.exitRequested){
+      S.tradeTicks++;
+      if(S.tradeTicks>=CONFIG.MULTIPLIER_EXIT_TICKS) closeActiveMultiplierAtMarket();
+    }
+    return;
+  }
+
+  if(S.stopped) return;
+
+  S.ticks.push(price);
+  if(S.ticks.length>200) S.ticks.shift();
   if(S.ticks.length<30) return;
+
   const signal=analyze(S.ticks);
   S.currentSignal=signal;
   if(signal) placeTrade(signal);
@@ -455,47 +518,86 @@ function getStake(){
   return Math.min(CONFIG.BASE_STAKE*Math.pow(CONFIG.MARTI_MULT,lv),S.balance*0.05);
 }
 
+function closeActiveMultiplierAtMarket(){
+  if(!S.inTrade||!S.activeContractId||S.exitRequested) return;
+  S.exitRequested=true;
+  const contractId=S.activeContractId;
+  log.trade('5-tick exit reached | Selling multiplier contract '+contractId+' at market');
+  send({sell:contractId,price:0},msg=>{
+    if(msg.error){
+      S.exitRequested=false;
+      log.warn('Market exit failed: '+msg.error.message);
+      return;
+    }
+    log.trade('Market exit accepted | ID: '+contractId);
+  });
+}
+
 function placeTrade(signal){
   const dd=drawdownPct(), pp=pnlPct();
   if(dd>=CONFIG.MAX_DAILY_DD) {log.stop('DD limit hit — paused until midnight');S.stopped=true;return;}
   if(pp>=CONFIG.DAILY_TARGET) {log.win('Daily target hit — paused until midnight');S.stopped=true;return;}
   const stake=parseFloat(getStake().toFixed(2));
   if(stake<0.35){log.warn('Stake below minimum. Skipping.');return;}
-  S.inTrade=true; S.currentSignal=signal; S.tradeStartBalance=S.balance;
-  log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+' | $'+stake+' | DD:'+dd.toFixed(1)+'%');
+
+  const contractType=signal.dir==='up'?'MULTUP':'MULTDOWN';
+  const symbol=SYMBOL_MAP[CONFIG.INSTRUMENT];
+
+  S.inTrade=true;
+  S.currentSignal=signal;
+  S.tradeStartBalance=S.balance;
+  S.tradeTicks=0;
+  S.exitRequested=false;
+
+  log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+
+    ' | '+contractType+' x'+CONFIG.MULTIPLIER+
+    ' | '+symbol+' | $'+stake+' | DD:'+dd.toFixed(1)+'%');
+
   if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){simulateTrade(signal,stake);return;}
+
   send({
     proposal:1,
     amount:stake,
     basis:'stake',
-    contract_type:signal.dir==='up'?'CALL':'PUT',
-    underlying_symbol:SYMBOL_MAP[CONFIG.INSTRUMENT],
-    duration:5,
-    duration_unit:'t',
+    contract_type:contractType,
     currency:'USD',
+    duration_unit:'s',
+    multiplier:CONFIG.MULTIPLIER,
+    underlying_symbol:symbol,
   },proposalMsg=>{
     if(proposalMsg.error){
       log.warn('Proposal failed: '+proposalMsg.error.message);
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+      S.tradeTicks=0; S.exitRequested=false;
       return;
     }
+
     const proposal=proposalMsg.proposal||{};
     const proposalId=proposal.id;
     const askPrice=parseFloat(proposal.ask_price);
+
     if(!proposalId||!Number.isFinite(askPrice)){
       log.warn('Proposal failed: missing proposal ID or ask price.');
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+      S.tradeTicks=0; S.exitRequested=false;
       return;
     }
-    log.trade('Proposal accepted | ID: '+proposalId+' | Price:$'+askPrice.toFixed(2));
+
+    log.trade('Multiplier proposal accepted | ID: '+proposalId+' | Price:$'+askPrice.toFixed(2));
+
     send({buy:proposalId,price:askPrice},msg=>{
       if(msg.error){
         log.warn('Order failed: '+msg.error.message);
         S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
+        S.tradeTicks=0; S.exitRequested=false;
         return;
       }
+
       S.activeContractId=msg.buy.contract_id;
-      log.trade('Order placed | ID: '+msg.buy.contract_id);
+      S.tradeTicks=0;
+      S.exitRequested=false;
+      log.trade('Multiplier order placed | ID: '+msg.buy.contract_id+
+        ' | exit after '+CONFIG.MULTIPLIER_EXIT_TICKS+' market ticks');
       send({proposal_open_contract:1,contract_id:msg.buy.contract_id,subscribe:1});
     });
   });
@@ -511,6 +613,8 @@ function onContractUpdate(c){
   const rawBal=parseFloat(c.balance_after);
   const balAfter=Number.isFinite(rawBal)?rawBal:null;
   S.activeContractId=null;
+  S.tradeTicks=0;
+  S.exitRequested=false;
   recordResult(profit>0,profit,balAfter,S.currentSignal);
 }
 
@@ -540,6 +644,7 @@ function recordResult(won,profit,balAfter,signal){
   if(won){S.wins++;S.consecutiveLoss=0;log.win('WIN +$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | WR:'+wr()+'% | #'+S.trades);}
   else{S.losses++;S.consecutiveLoss++;log.loss('LOSS -$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | Streak:'+S.consecutiveLoss);}
   S.inTrade=false; S.currentSignal=null; S.tradeStartBalance=null;
+  S.tradeTicks=0; S.exitRequested=false;
   if(CONFIG.DEMO_CONTRACT_EXECUTION&&CONFIG.DEMO_CONTRACT_MAX_TRADES>0&&S.trades>=CONFIG.DEMO_CONTRACT_MAX_TRADES){
     S.stopped=true; S.manualStop=true;
     log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');

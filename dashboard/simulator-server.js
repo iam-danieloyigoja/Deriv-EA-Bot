@@ -128,13 +128,13 @@ function snapshot(state, config) {
     inTrade: Boolean(state.inTrade),
     accountType: 'ORIGINAL BOT - '+tradeMode,
     balanceSource: simulatorMode ? 'DERIV DEMO START BALANCE + SIMULATED P&L' : 'DERIV ACCOUNT BALANCE',
-    tradeSource: simulatorMode ? 'ORIGINAL BOT SIMULATOR' : 'DERIV CALL/PUT 5-TICK CONTRACTS',
+    tradeSource: simulatorMode ? 'ORIGINAL BOT SIMULATOR' : 'DERIV MULTIPLIERS · 5-TICK MARKET EXIT',
     modeSummary: liveMode
       ? 'Live account connected. Trading starts only from the authenticated dashboard.'
       : demoContractMode
         ? 'Deriv demo account with real demo CALL/PUT contracts.'
         : 'Original strategy simulator.',
-    feedNote: simulatorMode ? 'No Deriv buy orders are sent.' : 'Contract execution uses Deriv proposal -> buy -> settlement.',
+    feedNote: simulatorMode ? 'No Deriv buy orders are sent.' : 'Contract execution uses Deriv multiplier proposal -> buy -> 5-tick market sell -> settlement.',
     instrument: typeof config.INSTRUMENT === 'string' ? config.INSTRUMENT : null,
     allowedInstruments: instruments,
     balance: safeNumber(state.balance),
@@ -170,6 +170,8 @@ function snapshot(state, config) {
     dailyTarget: safeNumber(config.DAILY_TARGET),
     martingale: config.MARTINGALE === true,
     martiMult: safeNumber(config.MARTI_MULT),
+    multiplier: safeNumber(config.MULTIPLIER),
+    multiplierExitTicks: safeNumber(config.MULTIPLIER_EXIT_TICKS),
     recentTrades: (Array.isArray(state.recentTrades) ? state.recentTrades.slice(0, 12) : []).map(t => ({
       strategy: String(t.strategy || '—').slice(0, 70),
       dir: ['up','down'].includes(t.dir) ? t.dir : 'unknown',
