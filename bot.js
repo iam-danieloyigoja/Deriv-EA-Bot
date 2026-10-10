@@ -85,7 +85,7 @@ const S = {
   lastPrice:0, priceHistory:[], equityHistory:[],
   currentSignal:null, dailyResets:0,
   activeContractId:null, tradeStartBalance:null,
-  tradeTicks:0, exitRequested:false,
+  tradeTicks:0, exitRequested:false, activeTradeMeta:null,
   indicators:{ rsi:50, stochRsi:50, emaSignal:'—', macd:0, squeeze:false, spike:false },
 };
 
@@ -525,14 +525,17 @@ function closeActiveMultiplierAtMarket(){
   if(!S.inTrade||!S.activeContractId||S.exitRequested) return;
   S.exitRequested=true;
   const contractId=S.activeContractId;
-  log.trade('5-tick exit reached | Selling multiplier contract '+contractId+' at market');
+  log.trade(CONFIG.MULTIPLIER_EXIT_TICKS+'-tick exit reached | Selling multiplier contract '+contractId+' at market');
   send({sell:contractId,price:0},msg=>{
     if(msg.error){
       S.exitRequested=false;
       log.warn('Market exit failed: '+msg.error.message);
       return;
     }
-    log.trade('Market exit accepted | ID: '+contractId);
+    const soldFor=parseFloat(((msg.sell||{}).sold_for));
+    if(S.activeTradeMeta&&Number.isFinite(soldFor)) S.activeTradeMeta.sellResponsePrice=soldFor;
+    log.trade('Market exit accepted | ID: '+contractId+
+      (Number.isFinite(soldFor)?' | sold_for:$'+soldFor.toFixed(4):''));
   });
 }
 
@@ -551,6 +554,19 @@ function placeTrade(signal){
   S.tradeStartBalance=S.balance;
   S.tradeTicks=0;
   S.exitRequested=false;
+  S.activeTradeMeta={
+    strategy:signal.strategy,
+    dir:signal.dir,
+    contractType,
+    symbol,
+    stake,
+    multiplier:CONFIG.MULTIPLIER,
+    signalPrice:S.lastPrice,
+    proposalSpot:null,
+    proposalAsk:null,
+    contractId:null,
+    sellResponsePrice:null,
+  };
 
   log.trade('Signal: '+signal.strategy+' | '+signal.dir.toUpperCase()+
     ' | '+contractType+' x'+CONFIG.MULTIPLIER+
@@ -571,18 +587,24 @@ function placeTrade(signal){
     if(proposalMsg.error){
       log.warn('Proposal failed: '+proposalMsg.error.message);
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-      S.tradeTicks=0; S.exitRequested=false;
+      S.tradeTicks=0; S.exitRequested=false; S.activeTradeMeta=null;
       return;
     }
 
     const proposal=proposalMsg.proposal||{};
     const proposalId=proposal.id;
     const askPrice=parseFloat(proposal.ask_price);
+    const proposalSpot=parseFloat(proposal.spot);
+
+    if(S.activeTradeMeta){
+      S.activeTradeMeta.proposalAsk=Number.isFinite(askPrice)?askPrice:null;
+      S.activeTradeMeta.proposalSpot=Number.isFinite(proposalSpot)?proposalSpot:null;
+    }
 
     if(!proposalId||!Number.isFinite(askPrice)){
       log.warn('Proposal failed: missing proposal ID or ask price.');
       S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-      S.tradeTicks=0; S.exitRequested=false;
+      S.tradeTicks=0; S.exitRequested=false; S.activeTradeMeta=null;
       return;
     }
 
@@ -592,11 +614,12 @@ function placeTrade(signal){
       if(msg.error){
         log.warn('Order failed: '+msg.error.message);
         S.inTrade=false; S.activeContractId=null; S.tradeStartBalance=null;
-        S.tradeTicks=0; S.exitRequested=false;
+        S.tradeTicks=0; S.exitRequested=false; S.activeTradeMeta=null;
         return;
       }
 
       S.activeContractId=msg.buy.contract_id;
+      if(S.activeTradeMeta) S.activeTradeMeta.contractId=msg.buy.contract_id;
       S.tradeTicks=0;
       S.exitRequested=false;
       log.trade('Multiplier order placed | ID: '+msg.buy.contract_id+
@@ -611,10 +634,40 @@ function onContractUpdate(c){
   if(String(c.contract_id)!==String(S.activeContractId)) return;
   const closed=Boolean(c.is_sold)||(c.status&&c.status!=='open');
   if(!closed) return;
+
   const profit=parseFloat(c.profit);
   if(!Number.isFinite(profit)) return;
+
   const rawBal=parseFloat(c.balance_after);
   const balAfter=Number.isFinite(rawBal)?rawBal:null;
+  const buyPrice=parseFloat(c.buy_price);
+  const contractSellPrice=parseFloat(c.sell_price);
+  const entrySpot=parseFloat(c.entry_tick??c.entry_spot);
+  const exitSpot=parseFloat(c.exit_tick??c.exit_spot);
+  const heldTicks=S.tradeTicks;
+  const meta=S.activeTradeMeta||{};
+  const sellPrice=Number.isFinite(contractSellPrice)
+    ? contractSellPrice
+    : (Number.isFinite(meta.sellResponsePrice)?meta.sellResponsePrice:null);
+
+  const f=(v,d=5)=>Number.isFinite(v)?Number(v).toFixed(d):'n/a';
+  log.info(
+    'Trade telemetry | strategy:'+(meta.strategy||((S.currentSignal||{}).strategy)||'n/a')+
+    ' | dir:'+String(meta.dir||((S.currentSignal||{}).dir)||'n/a').toUpperCase()+
+    ' | contract:'+(meta.contractType||'n/a')+
+    ' | symbol:'+(meta.symbol||SYMBOL_MAP[CONFIG.INSTRUMENT])+
+    ' | multiplier:x'+(meta.multiplier||CONFIG.MULTIPLIER)+
+    ' | stake:$'+f(meta.stake,2)+
+    ' | held_ticks:'+heldTicks+
+    ' | signal_spot:'+f(meta.signalPrice)+
+    ' | proposal_spot:'+f(meta.proposalSpot)+
+    ' | entry_spot:'+f(entrySpot)+
+    ' | exit_spot:'+f(exitSpot)+
+    ' | buy_price:$'+f(buyPrice,4)+
+    ' | sell_price:$'+f(sellPrice,4)+
+    ' | pnl:$'+profit.toFixed(4)
+  );
+
   S.activeContractId=null;
   S.tradeTicks=0;
   S.exitRequested=false;
@@ -647,7 +700,7 @@ function recordResult(won,profit,balAfter,signal){
   if(won){S.wins++;S.consecutiveLoss=0;log.win('WIN +$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | WR:'+wr()+'% | #'+S.trades);}
   else{S.losses++;S.consecutiveLoss++;log.loss('LOSS -$'+Math.abs(profit).toFixed(2)+' | Bal:$'+S.balance.toFixed(2)+' | Streak:'+S.consecutiveLoss);}
   S.inTrade=false; S.currentSignal=null; S.tradeStartBalance=null;
-  S.tradeTicks=0; S.exitRequested=false;
+  S.tradeTicks=0; S.exitRequested=false; S.activeTradeMeta=null;
   if(CONFIG.DEMO_CONTRACT_EXECUTION&&CONFIG.DEMO_CONTRACT_MAX_TRADES>0&&S.trades>=CONFIG.DEMO_CONTRACT_MAX_TRADES){
     S.stopped=true; S.manualStop=true;
     log.stop('Demo contract acceptance limit reached: '+S.trades+' trades. Paused.');

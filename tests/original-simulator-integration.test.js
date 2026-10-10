@@ -90,6 +90,18 @@ test('actual Boom Crash symbols use signal-directed multipliers with 5-tick mark
 });
 
 
+test('multiplier settlement logs entry exit and price telemetry', () => {
+  assert.ok(bot.includes("activeTradeMeta:null"));
+  assert.ok(bot.includes("proposalSpot=parseFloat(proposal.spot)"));
+  assert.ok(bot.includes("entrySpot=parseFloat(c.entry_tick??c.entry_spot)"));
+  assert.ok(bot.includes("exitSpot=parseFloat(c.exit_tick??c.exit_spot)"));
+  assert.ok(bot.includes("'Trade telemetry | strategy:'"));
+  assert.ok(bot.includes("' | buy_price:$'"));
+  assert.ok(bot.includes("' | sell_price:$'"));
+  assert.ok(bot.includes("' | pnl:$'"));
+  assert.ok(bot.includes("CONFIG.MULTIPLIER_EXIT_TICKS+'-tick exit reached"));
+});
+
 test('real-contract preflight validates multiplier contracts without buying', () => {
   assert.ok(bot.includes("function validateContractOffering()"));
   assert.ok(bot.includes("if(CONFIG.DEMO_MODE&&!CONFIG.DEMO_CONTRACT_EXECUTION){ resolve(true); return; }"));
